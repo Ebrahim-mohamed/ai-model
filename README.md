@@ -6,16 +6,14 @@ for the build order this project follows step by step.
 
 ## Status
 
-**Step 1 of 9 complete: Multi-Tenant Database Schema & Client Registry.**
+**Step 2 of 9 complete: Core Configuration & Dynamic Schema Registry.**
 
 Implemented so far:
-- `knowledge_chunks` — the pgvector store (`client_id NOT NULL`, `embedding VECTOR(1024)`, `metadata JSONB`).
-- `client_config` — the tenant registry (`client_id` PK, `allowed_metadata_keys[]`, `boilerplate_threshold`, `onedrive_item_id`, `embedding_backend_override`).
-- Repositories: `ChunkModel`, `ClientConfigModel` (every method requires `client_id`).
-- `BucketEnum` (`VECTOR_DB` / `PROMPT_TEMPLATE` / `SYSTEM_DIRECTIVE`).
-- One Alembic migration creating both tables plus `idx_chunks_client` (btree), `idx_chunks_metadata` (GIN), `idx_chunks_embedding_hnsw` (HNSW, cosine).
+- **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
+- **Step 2** — `helpers/config.py` extended (MSAL scaffolding, `EMBEDDING_BACKEND_LITERAL`, `DEFAULT_BOILERPLATE_THRESHOLD`); `schema_registry` table + `SchemaRegistryModel` (auto-discovery/auto-registration, upsert-on-discovery, zero manual DB entry); stateless `utils/dynamic_schema_loader.py`.
+- Two chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2).
 
-Not built yet (later steps): `helpers/config.py`'s non-Postgres fields, schema registry / auto-discovery, OneDrive/MSAL store, sync endpoint, chunking engine, retrieval endpoint. Do not assume any of these exist.
+Not built yet (later steps): OneDrive/MSAL store, sync endpoint, chunking engine, vector storage layer, embedding shootout, retrieval endpoint. Do not assume any of these exist.
 
 ## Prerequisites
 
@@ -46,7 +44,8 @@ pip install -r requirements.txt
 ```
 
 Installs `SQLAlchemy`, `asyncpg`, `psycopg2-binary`, `alembic`, `pgvector`, `python-dotenv`,
-`pydantic-settings` (Step 1 scope only — later steps append their own dependencies here).
+`pydantic-settings` (Steps 1–2 scope — Step 2 needed no new packages; later steps append their
+own dependencies here as they're built, e.g. `pandas`/`openpyxl` for Step 5, `msal` for Step 3).
 
 ### 3. App environment file
 
@@ -132,6 +131,112 @@ docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
 
 Expected: `ERROR: null value in column "client_id" of relation "knowledge_chunks" violates not-null constraint`
 
+## Step 2: Core Configuration & Dynamic Schema Registry
+
+### Architectural additions
+
+- **`helpers/config.py`** — extended additively with MSAL scaffolding (`MSAL_CLIENT_ID`,
+  `MSAL_TOKEN_CACHE_PATH`, reserved for Step 3), `EMBEDDING_BACKEND_LITERAL` (Step 8's two
+  shootout candidates), and `DEFAULT_BOILERPLATE_THRESHOLD` (a platform-wide fallback only — a
+  client's actual threshold always comes from its own `client_config` row). Still zero logic,
+  typed fields only.
+- **`schema_registry` table + `SchemaRegistryModel`** — one row per `(client_id, sheet_name)`,
+  holding the sheet's discovered column list, its `BucketEnum` bucket, and its mandatory fields.
+  Rows are written by the pipeline itself via `get_or_register()` (upsert-on-discovery) — never
+  hand-typed by an admin. An unregistered sheet is auto-inserted with `bucket='VECTOR_DB'` and no
+  mandatory fields; an already-registered sheet has its column list refreshed on every call
+  (picking up drift), while its bucket/mandatory fields are left untouched, since reclassifying
+  those is a separate, deliberate step (`update_bucket` / `set_mandatory_fields`).
+- **`utils/dynamic_schema_loader.py`** — the stateless call site Step 5's Sheet Dispatcher will
+  use: forwards whatever columns it's handed straight into `SchemaRegistryModel.get_or_register()`,
+  with zero sheet-specific branching. This is what keeps the pipeline schema-agnostic — the same
+  function registers a medical branch directory or a real-estate listings sheet identically.
+
+### Database migrations
+
+```bash
+cd src/models/db_schemes/raylab
+alembic revision --autogenerate -m "create schema_registry"
+alembic upgrade head
+alembic current            # should show the new revision, chained after Step 1's, marked (head)
+```
+
+No manual edits to the generated migration were needed — `schema_registry` uses only `String`,
+`ARRAY(String)`, and `DateTime`, all natively rendered by Alembic (unlike Step 1's
+`pgvector.Vector`, which needed the `render_item` hook in `env.py`).
+
+### Verifying auto-discovery, column drift, and idempotency
+
+Run from `src/`, with the conda env active:
+
+```bash
+cd /mnt/d/Raylab_Project/src
+python <<'EOF'
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+from helpers.config import get_settings
+from models.SchemaRegistryModel import SchemaRegistryModel
+from models.enums.BucketEnum import BucketEnum
+
+
+async def main():
+    settings = get_settings()
+    conn = (
+        f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
+        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
+    )
+    engine = create_async_engine(conn)
+    db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    registry = await SchemaRegistryModel.create_instance(db_client)
+
+    # 1. Auto-discovery: unregistered sheet -> auto-inserted, Bucket A, no mandatory fields
+    row = await registry.get_or_register(
+        client_id="cairoscan",
+        sheet_name="Branch Directory",
+        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)"],
+    )
+    assert row.bucket == BucketEnum.VECTOR_DB.value
+    assert row.mandatory_fields == []
+
+    # 2. Column drift: client adds "WhatsApp Number" -> re-sync updates the column list in place
+    row2 = await registry.get_or_register(
+        client_id="cairoscan",
+        sheet_name="Branch Directory",
+        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)", "WhatsApp Number"],
+    )
+    assert "WhatsApp Number" in row2.columns
+
+    # 3. Idempotency: identical call again -> same row, no duplicate
+    row3 = await registry.get_or_register(
+        client_id="cairoscan",
+        sheet_name="Branch Directory",
+        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)", "WhatsApp Number"],
+    )
+    assert row3.columns == row2.columns
+
+    all_rows = await registry.list_sheets(client_id="cairoscan")
+    assert len(all_rows) == 1   # still exactly one row -> no duplicate was ever created
+
+    await engine.dispose()
+    print("ALL CHECKS PASSED")
+
+
+asyncio.run(main())
+EOF
+```
+
+Confirm at the DB level too:
+
+```bash
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT client_id, sheet_name, bucket, columns, mandatory_fields FROM schema_registry;"
+```
+
+Expect exactly one row for `('cairoscan', 'Branch Directory')`, `bucket = 'VECTOR_DB'`, `columns`
+including `WhatsApp Number`, `mandatory_fields = '{}'`.
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -139,10 +244,13 @@ Expected: `ERROR: null value in column "client_id" of relation "knowledge_chunks
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `docker/env/.env.postgres` | Postgres container credentials |
 | `APP_NAME`, `APP_VERSION` | `src/.env` | App identity (used by `helpers/config.py`) |
 | `POSTGRES_USERNAME` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_MAIN_DATABASE` | `src/.env` | App-side Postgres connection (host: `localhost`, port: `5433`) |
+| `MSAL_CLIENT_ID` / `MSAL_TOKEN_CACHE_PATH` | `src/.env` | Reserved for Step 3 (OneDrive/MSAL store) — optional, unused until then |
+| `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends (Step 8 selects one) |
+| `DEFAULT_BOILERPLATE_THRESHOLD` | `src/.env` | Platform-wide fallback only — per-client value always comes from `client_config.boilerplate_threshold` |
 
 ## Project layout
 
-See `claude.md` §1.1 for the full target directory tree. Only the Step 1 subset exists today:
+See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–2 subset exists today:
 
 ```
 Raylab_Project/
@@ -152,14 +260,17 @@ Raylab_Project/
 ├── src/
 │   ├── requirements.txt
 │   ├── .env.example
-│   ├── helpers/config.py       # Postgres fields only — Step 2 extends this
+│   ├── helpers/config.py       # Postgres + MSAL scaffolding + embedding/threshold literals
+│   ├── utils/
+│   │   └── dynamic_schema_loader.py   # stateless auto-discovery call site (Step 5 wires it up)
 │   └── models/
 │       ├── BaseDataModel.py
 │       ├── ChunkModel.py
 │       ├── ClientConfigModel.py
+│       ├── SchemaRegistryModel.py     # get_or_register / update_bucket / set_mandatory_fields
 │       ├── enums/BucketEnum.py
 │       └── db_schemes/raylab/
-│           ├── schemes/{raylab_base,knowledge_chunk,client_config}.py
+│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry}.py
 │           ├── alembic.ini.example
 │           └── alembic/{env.py, script.py.mako, versions/}
 ├── .gitignore
