@@ -1,0 +1,10 @@
+# Step 1 scope only: DB schema + migrations for knowledge_chunks / client_config.
+# Later steps append their own dependencies here as they are built (fastapi,
+# celery, msal, sentence-transformers, ...) — see claude.md §1.2.
+SQLAlchemy==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+alembic==1.14.0
+pgvector==0.4.0
+python-dotenv==1.0.1
+pydantic-settings==2.2.1

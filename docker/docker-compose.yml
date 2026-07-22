@@ -1,0 +1,30 @@
+services:
+  # PostgreSQL + pgvector — the only service Step 1 requires.
+  # Later steps append their own services here (fastapi, celery-worker,
+  # redis, rabbitmq, nginx, ...) as they are actually built — see claude.md §1.2
+  # (growth is additive, never edited-in-place ahead of schedule).
+  pgvector:
+    image: pgvector/pgvector:0.8.0-pg17
+    container_name: raylab-pgvector
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    env_file:
+      - ./env/.env.postgres
+    networks:
+      - backend
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  pgvector_data:

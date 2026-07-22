@@ -1,0 +1,18 @@
+# Python
+claude.md
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment files with real secrets — only .env.example* are committed
+.env
+src/.env
+docker/env/.env.postgres
+
+# Alembic — the .ini with a real DB URL is a local copy of alembic.ini.example
+src/models/db_schemes/raylab/alembic.ini
+
+# Editor
+.vscode/
+
