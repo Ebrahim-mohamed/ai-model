@@ -8,9 +8,10 @@ class Settings(BaseSettings):
 
     Step 1 added the Postgres fields. Step 2 added the embedding backend
     literal set (Step 8 selects one) and the platform-wide
-    boilerplate-threshold fallback. Step 3 wires up MSAL (now genuinely
+    boilerplate-threshold fallback. Step 3 wired up MSAL (now genuinely
     consumed, so it's required rather than optional) and the OneDrive
-    provider selection — additive; nothing prior is reworked.
+    provider selection. Step 4 adds Celery broker/backend config — additive;
+    nothing prior is reworked.
     """
 
     APP_NAME: str
@@ -48,6 +49,16 @@ class Settings(BaseSettings):
     # client's boilerplate detection is client_config.boilerplate_threshold
     # — this constant is never read in place of that per-tenant row.
     DEFAULT_BOILERPLATE_THRESHOLD: float = 0.9
+
+    # Celery — task queue config for the on-demand sync trigger (Step 4).
+    # No beat/schedule fields exist here on purpose: OneDrive sync is
+    # human-initiated only, never periodic (claude.md §2.3).
+    CELERY_BROKER_URL: str
+    CELERY_RESULT_BACKEND: str
+    CELERY_TASK_SERIALIZER: str = "json"
+    CELERY_TASK_TIME_LIMIT: int = 600
+    CELERY_TASK_ACKS_LATE: bool = True
+    CELERY_WORKER_CONCURRENCY: int = 2
 
     class Config:
         env_file = ".env"

@@ -1,8 +1,86 @@
 services:
-  # PostgreSQL + pgvector — the only service Step 1 requires.
-  # Later steps append their own services here (fastapi, celery-worker,
-  # redis, rabbitmq, nginx, ...) as they are actually built — see claude.md §1.2
-  # (growth is additive, never edited-in-place ahead of schedule).
+  # FastAPI Application
+  fastapi:
+    build:
+      context: ..
+      dockerfile: docker/raylab/Dockerfile
+    container_name: raylab-fastapi
+    ports:
+      - "8000:8000"
+    networks:
+      - backend
+    restart: always
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./env/.env.app
+
+  # Celery Worker — no celery-beat service exists here, deliberately.
+  # OneDrive sync is human-initiated only via POST /api/sync; there is
+  # nothing periodic in this system for a beat scheduler to run.
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/raylab/Dockerfile
+    container_name: raylab-celery-worker
+    networks:
+      - backend
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    env_file:
+      - ./env/.env.app
+    command: ["python", "-m", "celery", "-A", "celery_app", "worker", "--queues=default,onedrive_sync", "--loglevel=info"]
+
+  # RabbitMQ (Celery broker)
+  rabbitmq:
+    image: rabbitmq:4.1.2-management-alpine
+    container_name: raylab-rabbitmq
+    ports:
+      - "5673:5672"    # AMQP port
+      - "15673:15672"  # Management UI port
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    env_file:
+      - ./env/.env.rabbitmq
+    networks:
+      - backend
+    restart: always
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      timeout: 10s
+      retries: 5
+
+  # Redis (Celery result backend)
+  redis:
+    image: redis:8.0.3-alpine
+    container_name: raylab-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    env_file:
+      - ./env/.env.redis
+    networks:
+      - backend
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 10s
+      retries: 5
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-raylab_redis_2222}"]
+
+  # PostgreSQL + pgvector
   pgvector:
     image: pgvector/pgvector:0.8.0-pg17
     container_name: raylab-pgvector
@@ -28,3 +106,5 @@ networks:
 
 volumes:
   pgvector_data:
+  redis_data:
+  rabbitmq_data:

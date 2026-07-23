@@ -29,6 +29,16 @@ class ClientConfigModel(BaseDataModel):
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def get_client_id_by_admin_api_key(self, admin_api_key: str) -> str | None:
+        """The one deliberate exception to 'every method requires client_id':
+        this method's entire purpose is resolving client_id FROM a
+        credential, for the sync route's auth dependency. client_id must
+        never be a client-supplied field (Implementation Plan Step 4)."""
+        async with self.db_client() as session:
+            stmt = select(ClientConfig.client_id).where(ClientConfig.admin_api_key == admin_api_key)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
     async def upsert_client_config(self, client_id: str, **fields) -> ClientConfig:
         async with self.db_client() as session:
             async with session.begin():

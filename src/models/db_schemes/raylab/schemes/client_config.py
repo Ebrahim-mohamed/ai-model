@@ -15,3 +15,10 @@ class ClientConfig(SQLAlchemyBase):
     boilerplate_threshold = Column(Float, nullable=False, server_default="0.9")
     onedrive_item_id = Column(String, nullable=True)
     embedding_backend_override = Column(String, nullable=True)
+
+    # Step 4 — the minimal "authenticated admin session" stand-in: POST
+    # /api/sync resolves client_id from this key server-side, never from a
+    # client-supplied field. Section 2 has no full admin-auth system in
+    # scope; this is the smallest mechanism that still makes the resolution
+    # server-controlled rather than trusting the caller's word for it.
+    admin_api_key = Column(String, nullable=True, unique=True)
