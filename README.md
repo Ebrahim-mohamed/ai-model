@@ -6,16 +6,24 @@ for the build order this project follows step by step.
 
 ## Status
 
-**Step 4 of 9 complete: On-Demand Sync Trigger.**
+**Step 5 of 9 complete: Dynamic 1NF Sheet Parsing & Bucket Routing.**
 
 Implemented so far:
 - **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
 - **Step 2** — `helpers/config.py` extended (`EMBEDDING_BACKEND_LITERAL`, `DEFAULT_BOILERPLATE_THRESHOLD`); `schema_registry` table + `SchemaRegistryModel` (auto-discovery/auto-registration, upsert-on-discovery, zero manual DB entry); stateless `utils/dynamic_schema_loader.py`.
 - **Step 3** — `stores/onedrive/*` (Interface/Enums/Factory/`MSALGraphProvider`), `TokenCacheModel` (Fernet-encrypted, DB-backed token cache, `client_id`-scoped, never plaintext).
 - **Step 4** — `main.py` + `celery_app.py` (the two composition roots), `routes/sync.py` (`POST /api/sync`, `GET /api/sync/{task_id}/status`), `controllers/SyncController.py`, `tasks/onedrive_sync.py`. Redis/RabbitMQ added as Docker services; **no celery-beat service, no `beat_schedule` entry** — sync stays human-initiated only.
-- Four chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → Step 4's `client_config.admin_api_key` column (see Step 4 section below for its revision id).
+- **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
+- Five chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → Step 4's `client_config.admin_api_key` → Step 5's `staging_rows` table (see the Step 5 section below for its revision id).
 
-Not built yet (later steps): dynamic sheet parsing/bucket routing, chunking engine, vector storage layer, embedding shootout, retrieval endpoint. Do not assume any of these exist.
+Not built yet (later steps): chunking engine (Bucket A boilerplate detection), vector storage layer, embedding shootout, retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
+
+**Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
+were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
+currently-onboarded client in this actual running environment is `client_id='raylab'`
+(`admin_api_key='raylab-admin-test-key'`) — see **Daily Startup** below. When following the
+historical `psql`/script examples further down, substitute `raylab` for `cairoscan` unless you've
+onboarded `cairoscan` for real too.
 
 ## Prerequisites
 
@@ -23,6 +31,77 @@ Not built yet (later steps): dynamic sheet parsing/bucket routing, chunking engi
 - Docker Desktop with the WSL2 backend enabled
 - Python 3.10+ inside WSL
 - DBeaver (DB inspection) and Postman (API testing, once endpoints exist) on the Windows host
+
+## Daily Startup (Resuming Work)
+
+Once everything from Steps 1–5 is already built and migrated, this is everything needed to bring
+the whole stack back up after a reboot/shutdown — no setup, just starting what already exists.
+Skip to **Local Setup & Development** below only if you're setting this up for the first time.
+
+### 1. Start Docker Desktop
+
+Open Docker Desktop on Windows and wait until it's fully running (whale icon settled in the system
+tray) before continuing — WSL2's Docker integration isn't ready until it is.
+
+### 2. Start the infrastructure containers
+
+```bash
+cd /mnt/d/Raylab_Project/docker
+docker compose up -d pgvector redis rabbitmq
+docker compose ps
+```
+
+Wait until all three show `healthy` — don't move on if any is still `starting`. If a container
+shows unhealthy or won't start, see the troubleshooting note at the end of this section.
+
+### 3. Activate the Python environment
+
+```bash
+conda activate raylab
+```
+
+### 4. Start the Celery worker (its own terminal — leave it running)
+
+```bash
+cd /mnt/d/Raylab_Project/src
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing --loglevel=info
+```
+
+Confirm the startup banner lists both `tasks.onedrive_sync.fetch_and_dispatch` and
+`tasks.document_parsing.parse_and_stage` under `[tasks]`, and ends with `celery@<host> ready.`
+
+### 5. Start the FastAPI server (a second terminal — leave it running too)
+
+```bash
+cd /mnt/d/Raylab_Project/src
+uvicorn main:app --reload --port 8000
+```
+
+### 6. Smoke-test before touching Postman
+
+```bash
+curl http://localhost:8000/api/
+```
+Expect `{"app_name":"Raylab","app_version":"0.1"}`. If this hangs or errors, the API can't reach
+Postgres — re-check step 2's container health before going further.
+
+### 7. Resume testing in Postman
+
+Same environment/requests as before — `POST {{base_url}}/api/sync` with header
+`X-Admin-Api-Key: raylab-admin-test-key` (the real, currently-onboarded `client_id` this resolves
+to is `raylab`, not `cairoscan` — see the Step 4 section below for how that mapping works).
+
+### If you hit a "Connection reset by peer" error on the first request back
+
+This has happened twice in this project already (once against Postgres, once against Redis) —
+both times the actual container was fine, but a pooled connection inside a long-lived process
+(or, once, the container itself) went stale across a Windows sleep/wake cycle. If it recurs:
+```bash
+docker restart raylab-pgvector raylab-redis raylab-rabbitmq
+```
+then repeat step 4–5 (restart the worker and API so they open fresh connections) before retrying
+in Postman. `pool_pre_ping=True` on the Postgres engines should self-heal most cases automatically
+now; a full restart is the fallback if it doesn't.
 
 ## Local Setup & Development
 
@@ -431,6 +510,215 @@ celery -A celery_app inspect scheduled
 ```
 Expect an empty result for every worker (no scheduled entries at all).
 
+### Update: shared-folder, multi-file sync (post–Step 5)
+
+`fetch_and_dispatch` no longer fetches a single known file by Item ID. It now lists a shared
+OneDrive **folder**'s children via `GET /drives/{driveId}/items/{folderId}/children`, filters to
+items that are actual files (not sub-folders) whose name ends in `.xlsx`, and dispatches **one
+independent `parse_and_stage` call per file** — each scoped by its own file name as `source_file`,
+so a sync only ever replaces that specific file's previously-staged rows, never all of a client's
+files at once because one changed.
+
+- **`client_config`** gained `onedrive_drive_id` alongside the existing `onedrive_item_id` —
+  `onedrive_item_id` now means the shared folder's own Item ID (not a single workbook's).
+  Both are per-client, DB-sourced — never hardcoded in `stores/onedrive`.
+- **`OneDriveInterface`** gained a new port method, `fetch_files_in_folder(client_id, drive_id,
+  folder_id)` — an async generator yielding `(file_name, file_bytes)` for every `.xlsx` found,
+  following Graph's `@odata.nextLink` pagination. `fetch_file` (single-item fetch) is unchanged
+  and still used elsewhere (e.g. Item-ID lookups).
+- **`fetch_and_dispatch`**'s result shape changed: `parse_task_id` (singular) is now
+  `parse_task_ids` + `files_dispatched` (plural), since one sync can now produce many parse tasks.
+
+**Migration:**
+```bash
+cd src/models/db_schemes/raylab
+alembic revision --autogenerate -m "add onedrive_drive_id to client_config"
+alembic upgrade head
+```
+
+**Re-seeding `client_config` for the shared-folder model** (replaces the single-file `UPDATE` from
+the Step 4 section above — `onedrive_item_id` must now be the *folder's* Item ID, not a file's):
+```bash
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
+  "UPDATE client_config SET onedrive_drive_id = '<the real driveId>', onedrive_item_id = '<the real folder Item ID>' WHERE client_id = 'cairoscan';"
+```
+
+## Step 5: Dynamic 1NF Sheet Parsing & Bucket Routing
+
+### Architectural additions
+
+- **`controllers/DocumentParsingController.py`** — one generic function for every sheet, every
+  client. For each sheet in the fetched workbook it calls
+  `SchemaRegistryModel.get_or_register(...)` (auto-registering brand-new sheets on the spot,
+  defaulted to Bucket A), validates against whichever mandatory fields are already configured,
+  and yields every row tagged with its `BucketEnum` — **every row of every bucket also carries
+  the `sheet_name` it came from**, injected dynamically from the same `wb.sheetnames` loop, never
+  a per-sheet special case (claude.md §3.6). Structural shape (merged cells, multi-row headers) is
+  trusted, never inferred, per claude.md §3.1 — a malformed sheet just produces garbage pandas
+  columns, which is the correct failure mode, not a bug to detect and repair.
+- **`tasks/document_parsing.py`** (`parse_and_stage`) — chained directly off Step 4's
+  `fetch_and_dispatch` (which now base64-encodes the fetched bytes and enqueues this task with
+  `source_file=onedrive_item_id`). Nothing is written until the *entire* workbook parses
+  successfully — one sheet failing mandatory-field validation fails the whole sync, never a
+  partial write.
+- **`staging_rows` + `StagingRowModel`** — **Bucket A only.** Delete-and-reinsert scoped to
+  `client_id` + `source_file`, exactly like `knowledge_chunks`.
+- **Bucket B/C are never written to the database** (claude.md §3.5) — `utils/template_file_writer.py`
+  is the only code allowed to render them, into `stores/llm/templates/clients/<client_id>/
+  {prompt_templates,system_directives}.py`, following the exact `string.Template`-per-variable
+  structure `mini-rag-tut-017`'s `templates/locales/<lang>/*.py` already uses. Each row's variable
+  name (`template_id`) is derived mechanically — a slug of `sheet_name` plus a slug of the row's
+  own first populated field — never a hand-authored mapping. Every sync fully overwrites the
+  file (the file-based equivalent of delete-and-reinsert). These generated files are gitignored;
+  `TemplateParser` (Step 9) will read them back at request time.
+- **`celery_app.py`'s `get_setup_utils()` now returns a dict**, not a positional tuple — additive
+  as more models get added across later steps, and `tasks/onedrive_sync.py` was updated to match.
+
+### New dependency
+
+```bash
+conda activate raylab
+cd /mnt/d/Raylab_Project/src
+pip install -r requirements.txt   # adds pandas, openpyxl
+```
+
+### Database migration — `staging_rows`
+
+```bash
+cd src/models/db_schemes/raylab
+alembic revision --autogenerate -m "create staging_rows"
+alembic upgrade head
+alembic current
+```
+
+### Verifying — no live OneDrive needed
+
+Bucket routing, auto-discovery, and the generated template files can all be exercised directly
+against a local test workbook, bypassing Step 3's OneDrive fetch entirely. Run from `src/`, conda
+env active:
+
+```bash
+cd /mnt/d/Raylab_Project/src
+python <<'EOF'
+import asyncio
+import io
+
+import pandas as pd
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+from helpers.config import get_settings
+from models.SchemaRegistryModel import SchemaRegistryModel
+from models.StagingRowModel import StagingRowModel
+from models.enums.BucketEnum import BucketEnum
+from controllers.DocumentParsingController import DocumentParsingController
+from utils.template_file_writer import write_template_file
+
+
+async def main():
+    settings = get_settings()
+    conn = (
+        f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
+        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
+    )
+    engine = create_async_engine(conn)
+    db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    schema_registry_model = await SchemaRegistryModel.create_instance(db_client)
+    staging_row_model = await StagingRowModel.create_instance(db_client)
+
+    client_id = "cairoscan"
+
+    # Build a tiny in-memory workbook: one brand-new Bucket-A sheet, one
+    # sheet we pre-classify as Bucket C (mimicking an engineer's deliberate
+    # reclassification per claude.md §3.2 point 5 — auto-discovery alone
+    # would default it to Bucket A).
+    branch_directory = pd.DataFrame([
+        {"Account": "cairoscan", "Branch Name": "Mohandessen", "Address": "45 Anas Ibn Malek"},
+        {"Account": "cairoscan", "Branch Name": "Maadi", "Address": "12 Road 9"},
+    ])
+    reservation_process = pd.DataFrame([
+        {"Step": "1", "Instruction": "Ask for patient name and phone number"},
+        {"Step": "2", "Instruction": "Confirm branch and preferred time slot"},
+    ])
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        branch_directory.to_excel(writer, sheet_name="Branch Directory", index=False)
+        reservation_process.to_excel(writer, sheet_name="Reservation Process", index=False)
+    workbook_bytes = buf.getvalue()
+
+    # Pre-classify Reservation Process as Bucket C, as an engineer would
+    await schema_registry_model.get_or_register(
+        client_id=client_id, sheet_name="Reservation Process",
+        discovered_columns=["Step", "Instruction"],
+    )
+    await schema_registry_model.update_bucket(
+        client_id=client_id, sheet_name="Reservation Process",
+        bucket=BucketEnum.SYSTEM_DIRECTIVE,
+    )
+
+    parser = DocumentParsingController(schema_registry_model=schema_registry_model)
+
+    bucket_a_rows, bucket_c_rows = [], []
+    async for bucket, sheet_name, row_data in parser.parse_workbook(client_id=client_id, workbook_bytes=workbook_bytes):
+        if bucket == BucketEnum.VECTOR_DB:
+            bucket_a_rows.append({"sheet_name": sheet_name, "row_data": row_data})
+        elif bucket == BucketEnum.SYSTEM_DIRECTIVE:
+            bucket_c_rows.append(row_data)
+
+    print("1) Bucket A rows parsed:", len(bucket_a_rows))
+    assert len(bucket_a_rows) == 2
+    assert bucket_a_rows[0]["row_data"]["sheet_name"] == "Branch Directory"
+
+    branch_row = await schema_registry_model.get_schema(client_id, "Branch Directory")
+    print("2) auto-registered Branch Directory bucket:", branch_row.bucket)
+    assert branch_row.bucket == BucketEnum.VECTOR_DB.value
+
+    await staging_row_model.delete_rows_by_source_file(client_id=client_id, source_file="test-source")
+    inserted = await staging_row_model.insert_many_rows(client_id=client_id, rows=bucket_a_rows, source_file="test-source")
+    print("3) staged rows:", inserted)
+
+    file_path = write_template_file(client_id=client_id, bucket=BucketEnum.SYSTEM_DIRECTIVE, rows=bucket_c_rows)
+    print("4) wrote template file:", file_path)
+    with open(file_path, encoding="utf-8") as f:
+        contents = f.read()
+    assert "Template(" in contents
+    assert "reservation_process" in contents.lower() or "Step" in contents
+
+    await engine.dispose()
+    print("ALL CHECKS PASSED")
+
+
+asyncio.run(main())
+EOF
+```
+
+Then confirm at the DB and filesystem level:
+
+```bash
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT client_id, sheet_name, bucket, row_data->>'sheet_name' AS stamped_sheet FROM staging_rows;"
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT client_id, sheet_name, bucket FROM schema_registry WHERE client_id = 'cairoscan';"
+cat "src/stores/llm/templates/clients/cairoscan/system_directives.py"
+```
+
+Expect: two `staging_rows` for `Branch Directory` with `bucket='VECTOR_DB'` and `stamped_sheet='Branch Directory'`; `schema_registry` shows `Branch Directory` auto-registered as `VECTOR_DB` and `Reservation Process` as `SYSTEM_DIRECTIVE`; the generated file contains one `Template(...)` per Reservation Process row, and confirm **no** `prompt_templates`/`system_directives` table exists in Postgres:
+```bash
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c "\dt"
+```
+
+### Verifying through the real sync pipeline (optional, end-to-end)
+
+With the API/worker running (§Step 4) and a real or placeholder OneDrive setup, `POST /api/sync`
+now chains automatically into `parse_and_stage` — check its status the same way as `fetch_and_dispatch`:
+```bash
+curl -X POST http://localhost:8000/api/sync -H "X-Admin-Api-Key: test-cairoscan-admin-key"
+# take the parse_task_id from fetch_and_dispatch's result once it's SUCCESS, then:
+curl http://localhost:8000/api/sync/<parse_task_id>/status -H "X-Admin-Api-Key: test-cairoscan-admin-key"
+```
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -449,7 +737,7 @@ Expect an empty result for every worker (no scheduled entries at all).
 
 ## Project layout
 
-See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–4 subset exists today:
+See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–5 subset exists today:
 
 ```
 Raylab_Project/
@@ -470,23 +758,31 @@ Raylab_Project/
 │   │   └── schemes/sync.py
 │   ├── controllers/
 │   │   ├── BaseController.py
-│   │   └── SyncController.py
+│   │   ├── SyncController.py
+│   │   └── DocumentParsingController.py
 │   ├── tasks/
-│   │   └── onedrive_sync.py
-│   ├── stores/onedrive/
-│   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
-│   │   └── providers/MSALGraphProvider.py
+│   │   ├── onedrive_sync.py
+│   │   └── document_parsing.py
+│   ├── stores/
+│   │   ├── onedrive/
+│   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
+│   │   │   └── providers/MSALGraphProvider.py
+│   │   └── llm/templates/clients/<client_id>/   # generated, gitignored — Bucket B/C (§3.5)
+│   │       ├── prompt_templates.py
+│   │       └── system_directives.py
 │   ├── utils/
-│   │   └── dynamic_schema_loader.py   # stateless auto-discovery call site (Step 5 wires it up)
+│   │   ├── dynamic_schema_loader.py   # stateless auto-discovery call site
+│   │   └── template_file_writer.py    # the only code allowed to write templates/clients/*
 │   └── models/
 │       ├── BaseDataModel.py
 │       ├── ChunkModel.py
 │       ├── ClientConfigModel.py       # + get_client_id_by_admin_api_key
 │       ├── SchemaRegistryModel.py     # get_or_register / update_bucket / set_mandatory_fields
 │       ├── TokenCacheModel.py         # Fernet-encrypted, client_id-scoped
+│       ├── StagingRowModel.py         # Bucket A only
 │       ├── enums/BucketEnum.py
 │       └── db_schemes/raylab/
-│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry,token_cache}.py
+│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry,token_cache,staging_row}.py
 │           ├── alembic.ini.example
 │           └── alembic/{env.py, script.py.mako, versions/}
 ├── .gitignore

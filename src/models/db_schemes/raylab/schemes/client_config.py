@@ -13,7 +13,15 @@ class ClientConfig(SQLAlchemyBase):
     client_id = Column(String, primary_key=True)
     allowed_metadata_keys = Column(ARRAY(String), nullable=False, server_default="{}")
     boilerplate_threshold = Column(Float, nullable=False, server_default="0.9")
+
+    # The client's shared OneDrive sync folder: onedrive_item_id is that
+    # folder's own Item ID (not a single workbook's — every .xlsx file
+    # directly inside it is fetched and parsed on each sync), and
+    # onedrive_drive_id is the driveId it lives on. Both are per-client,
+    # DB-sourced values — never hardcoded in stores/onedrive.
     onedrive_item_id = Column(String, nullable=True)
+    onedrive_drive_id = Column(String, nullable=True)
+
     embedding_backend_override = Column(String, nullable=True)
 
     # Step 4 — the minimal "authenticated admin session" stand-in: POST

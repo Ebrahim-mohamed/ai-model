@@ -91,6 +91,47 @@ class MSALGraphProvider(OneDriveInterface):
         response.raise_for_status()
         return response.content
 
+    async def fetch_files_in_folder(self, client_id: str, drive_id: str, folder_id: str):
+        """Lists the given shared folder's children on the given drive and
+        yields (file_name, file_bytes) for every direct child that is
+        actually a file (not a sub-folder) whose name ends in .xlsx.
+        drive_id/folder_id are per-client, DB-sourced (client_config) —
+        never hardcoded and never accepted from anything but that client's
+        own configuration, so this can never be pointed at another
+        tenant's drive."""
+        access_token = await self.authenticate(client_id)
+
+        url = f"{GRAPH_BASE_URL}/drives/{drive_id}/items/{folder_id}/children"
+        while url:
+            response = await asyncio.to_thread(
+                requests.get,
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+            for item in payload.get("value", []):
+                name = item.get("name", "")
+                # "file" in item excludes sub-folders (a DriveItem carries a
+                # "file" or "folder" facet, never both) — belt-and-suspenders
+                # alongside the name check, since attempting /content on a
+                # folder would otherwise just fail with a confusing error.
+                if "file" not in item or not name.endswith(".xlsx"):
+                    continue
+
+                file_response = await asyncio.to_thread(
+                    requests.get,
+                    f"{GRAPH_BASE_URL}/drives/{drive_id}/items/{item['id']}/content",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                file_response.raise_for_status()
+                yield name, file_response.content
+
+            # Graph paginates folder listings — follow @odata.nextLink
+            # rather than silently truncating a folder with many files.
+            url = payload.get("@odata.nextLink")
+
     async def register_client_via_device_flow(self, client_id: str) -> None:
         """The one-time, human-supervised onboarding step (Section 2's
         Device Code Flow setup) — never called by authenticate()/
@@ -112,5 +153,31 @@ class MSALGraphProvider(OneDriveInterface):
                 f"Device flow failed for client_id={client_id!r}: {result.get('error_description')}"
             )
 
-        await self.token_cache_model.save_token_cache(client_id, cache.serialize())
+        # The device-flow wait above is human-paced — anywhere from seconds
+        # to minutes — and this is the first time this call touches the DB
+        # at all, so it's also the first connection attempt on this engine.
+        # A long enough wait can outlast a Docker/WSL2 network hiccup that
+        # has nothing to do with Postgres itself; retry a few times rather
+        # than losing a completed, hard-won interactive login to a
+        # transient connection error.
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                await self.token_cache_model.save_token_cache(client_id, cache.serialize())
+                break
+            except Exception as e:
+                last_error = e
+                self.logger.warning(
+                    f"save_token_cache attempt {attempt}/3 failed for client_id={client_id!r}: {e!r}"
+                )
+                if attempt < 3:
+                    await asyncio.sleep(2 * attempt)
+        else:
+            raise RuntimeError(
+                f"Device flow succeeded for client_id={client_id!r} but persisting the token "
+                f"cache failed after 3 attempts: {last_error!r}. The access token was NOT saved — "
+                "re-run register_client_via_device_flow for this client (the device flow itself "
+                "will need to be redone too, since the token wasn't persisted)."
+            ) from last_error
+
         self.logger.info(f"Token cache persisted for client_id={client_id!r}")

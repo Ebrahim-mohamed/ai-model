@@ -17,7 +17,11 @@ async def startup_span():
         f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
         f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
     )
-    app.db_engine = create_async_engine(postgres_conn)
+    # pool_pre_ping: this engine lives for the whole process lifetime — a
+    # pooled connection can go stale over hours of uptime (network blip,
+    # Postgres restart). Pre-ping transparently discards and reconnects
+    # instead of surfacing a "connection reset" error to a live request.
+    app.db_engine = create_async_engine(postgres_conn, pool_pre_ping=True)
     app.db_client = sessionmaker(app.db_engine, class_=AsyncSession, expire_on_commit=False)
 
     # The API process only ever needs Postgres + a Celery client to enqueue

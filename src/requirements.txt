@@ -1,7 +1,7 @@
-# Steps 1-4 scope: DB schema/migrations, config, schema registry, OneDrive/MSAL
-# store, on-demand sync trigger. Later steps append their own dependencies
-# here as they are built (pandas/openpyxl, sentence-transformers, ...) — see
-# claude.md §1.2.
+# Steps 1-5 scope: DB schema/migrations, config, schema registry, OneDrive/MSAL
+# store, on-demand sync trigger, dynamic sheet parsing. Later steps append
+# their own dependencies here as they are built (sentence-transformers, ...)
+# — see claude.md §1.2.
 SQLAlchemy==2.0.36
 asyncpg==0.30.0
 psycopg2-binary==2.9.10
@@ -23,3 +23,7 @@ redis==6.2.0
 kombu==5.5.4
 billiard==4.2.1
 vine==5.1.0
+
+# Step 5 — dynamic 1NF sheet parsing
+pandas==2.2.3
+openpyxl==3.1.5

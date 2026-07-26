@@ -6,31 +6,50 @@ from sqlalchemy.orm import sessionmaker
 
 from models.ClientConfigModel import ClientConfigModel
 from models.TokenCacheModel import TokenCacheModel
+from models.SchemaRegistryModel import SchemaRegistryModel
+from models.StagingRowModel import StagingRowModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
 
 settings = get_settings()
 
 
-async def get_setup_utils():
+async def get_setup_utils() -> dict:
     """The worker-process composition root — mirrors main.py's
     startup_span() for the API process. These two functions are the only
-    places concrete provider classes get instantiated (claude.md §1.2)."""
+    places concrete provider classes get instantiated (claude.md §1.2).
+
+    Returns a dict (not a positional tuple) so adding a new model here as
+    later steps grow this function is additive for every caller, never a
+    silent positional-order break for tasks that don't need the new one.
+    """
     settings = get_settings()
 
     postgres_conn = (
         f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
         f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
     )
-    db_engine = create_async_engine(postgres_conn)
+    # pool_pre_ping: a worker process lives for hours, this engine gets
+    # reused across many tasks — pre-ping discards/reconnects a connection
+    # that's gone stale between tasks instead of failing the task on it.
+    db_engine = create_async_engine(postgres_conn, pool_pre_ping=True)
     db_client = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
 
     client_config_model = await ClientConfigModel.create_instance(db_client)
     token_cache_model = await TokenCacheModel.create_instance(db_client)
+    schema_registry_model = await SchemaRegistryModel.create_instance(db_client)
+    staging_row_model = await StagingRowModel.create_instance(db_client)
 
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
 
-    return db_engine, client_config_model, token_cache_model, onedrive_client
+    return {
+        "db_engine": db_engine,
+        "client_config_model": client_config_model,
+        "token_cache_model": token_cache_model,
+        "schema_registry_model": schema_registry_model,
+        "staging_row_model": staging_row_model,
+        "onedrive_client": onedrive_client,
+    }
 
 
 celery_app = Celery(
@@ -39,6 +58,7 @@ celery_app = Celery(
     backend=settings.CELERY_RESULT_BACKEND,
     include=[
         "tasks.onedrive_sync",
+        "tasks.document_parsing",
     ],
 )
 
@@ -66,6 +86,7 @@ celery_app.conf.update(
 
     task_routes={
         "tasks.onedrive_sync.fetch_and_dispatch": {"queue": "onedrive_sync"},
+        "tasks.document_parsing.parse_and_stage": {"queue": "document_parsing"},
     },
 
     timezone="UTC",

@@ -20,3 +20,14 @@ class OneDriveInterface(ABC):
     @abstractmethod
     async def fetch_file(self, client_id: str, item_id: str) -> bytes:
         pass
+
+    @abstractmethod
+    def fetch_files_in_folder(self, client_id: str, drive_id: str, folder_id: str):
+        """Async generator yielding (file_name, file_bytes) for every
+        .xlsx item directly inside the given shared folder — never a
+        sub-folder's contents recursively, and never another client's
+        drive/folder. client_id is required, no default, exactly like
+        every other method here (claude.md §1.3). drive_id/folder_id are
+        per-client values the caller reads from client_config — this
+        method never hardcodes or defaults either."""
+        pass
