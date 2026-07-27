@@ -7,8 +7,7 @@ class Settings(BaseSettings):
     """Single source of truth for all environment/config values.
 
     Step 1 added the Postgres fields. Step 2 added the embedding backend
-    literal set (Step 8 selects one) and the platform-wide
-    boilerplate-threshold fallback. Step 3 wired up MSAL (now genuinely
+    literal set (Step 8 selects one). Step 3 wired up MSAL (now genuinely
     consumed, so it's required rather than optional) and the OneDrive
     provider selection. Step 4 adds Celery broker/backend config — additive;
     nothing prior is reworked.
@@ -44,11 +43,6 @@ class Settings(BaseSettings):
     # GENERATION_MODEL_ID_LITERAL: a literal list, not an enforced enum,
     # since it only documents which providers exist in stores/llm/providers/.
     EMBEDDING_BACKEND_LITERAL: List[str] = ["BGE_M3", "SWAN_LARGE"]
-
-    # Platform-wide fallback only. The value that actually governs a given
-    # client's boilerplate detection is client_config.boilerplate_threshold
-    # — this constant is never read in place of that per-tenant row.
-    DEFAULT_BOILERPLATE_THRESHOLD: float = 0.9
 
     # Celery — task queue config for the on-demand sync trigger (Step 4).
     # No beat/schedule fields exist here on purpose: OneDrive sync is

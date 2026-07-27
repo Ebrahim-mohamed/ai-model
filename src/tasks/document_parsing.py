@@ -64,10 +64,14 @@ async def _parse_and_stage(task_instance, client_id: str, workbook_b64: str, sou
             f"wrote {len(written_files)} template file(s)"
         )
 
+        from tasks.chunk_generation import generate_chunks
+        chunk_task = generate_chunks.delay(client_id=client_id, source_file=source_file)
+
         return {
             "client_id": client_id,
             "staged_rows": len(bucket_a_rows),
             "template_files_written": written_files,
+            "chunk_task_id": chunk_task.id,
         }
 
     finally:

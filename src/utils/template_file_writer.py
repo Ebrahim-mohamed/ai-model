@@ -33,8 +33,8 @@ def _slugify(value) -> str:
 def _render_row_content(row_data: dict) -> str:
     """Deterministic field concatenation — walks the row's columns in the
     order they were discovered, skips empty cells, joins as 'label: value'.
-    Same mechanism for every sheet and every client; no boilerplate
-    detection here (that's Step 6, and Bucket-A-only)."""
+    Same mechanism for every sheet and every client — Bucket B/C templates
+    only, distinct from ChunkingController's Bucket-A equivalent (Step 6)."""
     parts = [
         f"{label}: {value}"
         for label, value in row_data.items()

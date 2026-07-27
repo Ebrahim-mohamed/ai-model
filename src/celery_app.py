@@ -8,6 +8,7 @@ from models.ClientConfigModel import ClientConfigModel
 from models.TokenCacheModel import TokenCacheModel
 from models.SchemaRegistryModel import SchemaRegistryModel
 from models.StagingRowModel import StagingRowModel
+from models.ChunkModel import ChunkModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
 
 settings = get_settings()
@@ -38,6 +39,7 @@ async def get_setup_utils() -> dict:
     token_cache_model = await TokenCacheModel.create_instance(db_client)
     schema_registry_model = await SchemaRegistryModel.create_instance(db_client)
     staging_row_model = await StagingRowModel.create_instance(db_client)
+    chunk_model = await ChunkModel.create_instance(db_client)
 
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
@@ -48,6 +50,7 @@ async def get_setup_utils() -> dict:
         "token_cache_model": token_cache_model,
         "schema_registry_model": schema_registry_model,
         "staging_row_model": staging_row_model,
+        "chunk_model": chunk_model,
         "onedrive_client": onedrive_client,
     }
 
@@ -59,6 +62,7 @@ celery_app = Celery(
     include=[
         "tasks.onedrive_sync",
         "tasks.document_parsing",
+        "tasks.chunk_generation",
     ],
 )
 
@@ -87,6 +91,7 @@ celery_app.conf.update(
     task_routes={
         "tasks.onedrive_sync.fetch_and_dispatch": {"queue": "onedrive_sync"},
         "tasks.document_parsing.parse_and_stage": {"queue": "document_parsing"},
+        "tasks.chunk_generation.generate_chunks": {"queue": "chunk_generation"},
     },
 
     timezone="UTC",

@@ -39,11 +39,13 @@ class StagingRowModel(BaseDataModel):
             await session.commit()
         return len(staging_rows)
 
-    async def get_rows(self, client_id: str, sheet_name: str = None) -> list[StagingRow]:
+    async def get_rows(self, client_id: str, sheet_name: str = None, source_file: str = None) -> list[StagingRow]:
         async with self.db_client() as session:
             stmt = select(StagingRow).where(StagingRow.client_id == client_id)
             if sheet_name is not None:
                 stmt = stmt.where(StagingRow.sheet_name == sheet_name)
+            if source_file is not None:
+                stmt = stmt.where(StagingRow.source_file == source_file)
             result = await session.execute(stmt)
             return result.scalars().all()
 

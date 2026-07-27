@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float
+from sqlalchemy import Column, String
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from .raylab_base import SQLAlchemyBase
@@ -12,7 +12,6 @@ class ClientConfig(SQLAlchemyBase):
 
     client_id = Column(String, primary_key=True)
     allowed_metadata_keys = Column(ARRAY(String), nullable=False, server_default="{}")
-    boilerplate_threshold = Column(Float, nullable=False, server_default="0.9")
 
     # The client's shared OneDrive sync folder: onedrive_item_id is that
     # folder's own Item ID (not a single workbook's — every .xlsx file

@@ -10,13 +10,14 @@ for the build order this project follows step by step.
 
 Implemented so far:
 - **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
-- **Step 2** — `helpers/config.py` extended (`EMBEDDING_BACKEND_LITERAL`, `DEFAULT_BOILERPLATE_THRESHOLD`); `schema_registry` table + `SchemaRegistryModel` (auto-discovery/auto-registration, upsert-on-discovery, zero manual DB entry); stateless `utils/dynamic_schema_loader.py`.
+- **Step 2** — `helpers/config.py` extended (`EMBEDDING_BACKEND_LITERAL`); `schema_registry` table + `SchemaRegistryModel` (auto-discovery/auto-registration, upsert-on-discovery, zero manual DB entry); stateless `utils/dynamic_schema_loader.py`.
 - **Step 3** — `stores/onedrive/*` (Interface/Enums/Factory/`MSALGraphProvider`), `TokenCacheModel` (Fernet-encrypted, DB-backed token cache, `client_id`-scoped, never plaintext).
 - **Step 4** — `main.py` + `celery_app.py` (the two composition roots), `routes/sync.py` (`POST /api/sync`, `GET /api/sync/{task_id}/status`), `controllers/SyncController.py`, `tasks/onedrive_sync.py`. Redis/RabbitMQ added as Docker services; **no celery-beat service, no `beat_schedule` entry** — sync stays human-initiated only.
 - **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
-- Five chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → Step 4's `client_config.admin_api_key` → Step 5's `staging_rows` table (see the Step 5 section below for its revision id).
+- **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. No embedding yet (Step 8). See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
+- Six chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → Step 6's drop of `client_config.boilerplate_threshold` (see the Step 6 section below for its revision id).
 
-Not built yet (later steps): chunking engine (Bucket A boilerplate detection), vector storage layer, embedding shootout, retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
+Not built yet (later steps): vector storage layer polish (hybrid search), embedding shootout, retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
 
 **Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
 were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
@@ -31,7 +32,6 @@ onboarded `cairoscan` for real too.
 - Docker Desktop with the WSL2 backend enabled
 - Python 3.10+ inside WSL
 - DBeaver (DB inspection) and Postman (API testing, once endpoints exist) on the Windows host
-
 ## Daily Startup (Resuming Work)
 
 Once everything from Steps 1–5 is already built and migrated, this is everything needed to bring
@@ -217,10 +217,8 @@ Expected: `ERROR: null value in column "client_id" of relation "knowledge_chunks
 ### Architectural additions
 
 - **`helpers/config.py`** — extended additively with MSAL scaffolding (`MSAL_CLIENT_ID`,
-  `MSAL_TOKEN_CACHE_PATH`, reserved for Step 3), `EMBEDDING_BACKEND_LITERAL` (Step 8's two
-  shootout candidates), and `DEFAULT_BOILERPLATE_THRESHOLD` (a platform-wide fallback only — a
-  client's actual threshold always comes from its own `client_config` row). Still zero logic,
-  typed fields only.
+  `MSAL_TOKEN_CACHE_PATH`, reserved for Step 3) and `EMBEDDING_BACKEND_LITERAL` (Step 8's two
+  shootout candidates). Still zero logic, typed fields only.
 - **`schema_registry` table + `SchemaRegistryModel`** — one row per `(client_id, sheet_name)`,
   holding the sheet's discovered column list, its `BucketEnum` bucket, and its mandatory fields.
   Rows are written by the pipeline itself via `get_or_register()` (upsert-on-discovery) — never
@@ -719,6 +717,84 @@ curl -X POST http://localhost:8000/api/sync -H "X-Admin-Api-Key: test-cairoscan-
 curl http://localhost:8000/api/sync/<parse_task_id>/status -H "X-Admin-Api-Key: test-cairoscan-admin-key"
 ```
 
+## Step 6: Dynamic Chunking Engine (Bucket A)
+
+### Architectural additions
+
+- **`controllers/ChunkingController.py`** — one generic, two-step process for every sheet's
+  already-staged Bucket-A rows, for every client:
+  1. Concatenate every non-empty field into `"label: value"`, walking `schema_registry`'s
+     discovered column order for that `(client_id, sheet_name)` — no exclusions, no statistical
+     calculation of any kind.
+  2. Only *then*, as a separate final step, prepend `"[Document: {file_name}] "` (extension
+     stripped) to the finished string.
+
+  Every chunk also carries `metadata.sheet_name` and `metadata.source_file`, and `chunk_type` is
+  stamped with the sheet name — the same "never a per-sheet special case" discipline as Step 5.
+- **`tasks/chunk_generation.py`** (`generate_chunks`) — chained directly off Step 5's
+  `parse_and_stage` once staging succeeds. Delete-and-reinserts into `knowledge_chunks`, scoped to
+  `(client_id, source_file)`, exactly like `staging_rows`. No embedding is generated yet — the
+  `embedding` column stays `NULL` until Step 8's shootout picks a backend.
+- **`celery_app.py`'s `get_setup_utils()`** now also returns `chunk_model` (a `ChunkModel`
+  instance) alongside the models added in earlier steps.
+
+### Why there's no boilerplate detection here
+
+An earlier version of `ChunkingController` additionally computed each column's duplication rate
+against a per-client `client_config.boilerplate_threshold` and excluded columns that cleared it,
+stamping the excluded fields into `metadata` instead of the embedded text. That mechanism has been
+**fully removed** after evaluating it against real `raylab` data: column-level exclusion would
+have silently deleted a single branch's genuinely informative "no wheelchair access" exception
+(measured duplication rate ~97.4% on that column, driven entirely by every *other* branch sharing
+the same value), and excluded text moved into `metadata` is invisible to both dense embedding
+*and* BM25/keyword search — `metadata` is only ever exact-match filterable, never free-text
+searchable. The real data measured across `raylab`'s 17 synced sheets turned out to already be
+dense and diverse (max column duplication ~26% outside that one small directory sheet), so the
+theoretical "vector dilution" risk the mechanism was meant to guard against wasn't worth the
+concrete, silent data-loss risk it introduced. See `claude.md` §3.8 for the full write-up. There
+is nothing per-client to configure for chunking anymore — `client_config.boilerplate_threshold`
+no longer exists as a column.
+
+### Database migration — drop `client_config.boilerplate_threshold`
+
+```bash
+cd src/models/db_schemes/raylab
+alembic revision --autogenerate -m "drop boilerplate_threshold from client_config"
+alembic upgrade head
+alembic current   # ff0b5276e5cb (head)
+```
+
+Confirm at the DB level:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c "\d client_config"
+```
+Expect: no `boilerplate_threshold` row in the column list.
+
+### Verifying through the real sync pipeline
+
+With the API/worker running (§Step 4) and the real `raylab` OneDrive folder configured, trigger a
+full sync in **Postman** (never curl/raw scripts, per claude.md §4.3):
+
+1. `POST http://localhost:8000/api/sync` with header `X-Admin-Api-Key: <the real raylab admin key>`.
+2. Poll `GET http://localhost:8000/api/sync/<task_id>/status` for each chained task
+   (`fetch_and_dispatch` → `parse_and_stage` → `generate_chunks`, one chain per file in the shared
+   folder) until every one reports `SUCCESS`.
+
+Then confirm the result directly in Postgres (non-HTTP check, allowed under claude.md §4.3):
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT chunk_type, content, metadata FROM knowledge_chunks WHERE client_id = 'raylab' LIMIT 5;"
+```
+
+Expect, for every row:
+- `content` starts with `[Document: <file name without extension>] ` followed immediately by the
+  first populated field as `label: value`, then `. `-joined subsequent fields — nothing skipped
+  except genuinely empty cells.
+- `metadata` contains only `sheet_name` and `source_file` — **no** `boilerplate_excluded_fields`
+  key exists anymore, on any row, for any sheet.
+- Row count for a given `source_file` matches its staged row count in `staging_rows` exactly (no
+  exclusions means no row/column ever silently disappears from the embedded text).
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -732,7 +808,6 @@ curl http://localhost:8000/api/sync/<parse_task_id>/status -H "X-Admin-Api-Key: 
 | `TOKEN_CACHE_ENCRYPTION_KEY` | `src/.env` | Fernet key encrypting `token_cache.encrypted_cache` (required — see Step 3) |
 | `ONEDRIVE_AUTH_BACKEND` / `ONEDRIVE_AUTH_BACKEND_LITERAL` | `src/.env` | OneDrive provider selection (currently only `MSAL_GRAPH`) |
 | `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends (Step 8 selects one) |
-| `DEFAULT_BOILERPLATE_THRESHOLD` | `src/.env` | Platform-wide fallback only — per-client value always comes from `client_config.boilerplate_threshold` |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
 
 ## Project layout
@@ -751,7 +826,7 @@ Raylab_Project/
 │   ├── celery_app.py           # worker-process composition root, no beat_schedule
 │   ├── requirements.txt
 │   ├── .env.example
-│   ├── helpers/config.py       # Postgres + MSAL/OneDrive + Celery + embedding/threshold literals
+│   ├── helpers/config.py       # Postgres + MSAL/OneDrive + Celery + embedding backend literals
 │   ├── routes/
 │   │   ├── base.py
 │   │   ├── sync.py
@@ -759,10 +834,12 @@ Raylab_Project/
 │   ├── controllers/
 │   │   ├── BaseController.py
 │   │   ├── SyncController.py
-│   │   └── DocumentParsingController.py
+│   │   ├── DocumentParsingController.py
+│   │   └── ChunkingController.py
 │   ├── tasks/
 │   │   ├── onedrive_sync.py
-│   │   └── document_parsing.py
+│   │   ├── document_parsing.py
+│   │   └── chunk_generation.py
 │   ├── stores/
 │   │   ├── onedrive/
 │   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
