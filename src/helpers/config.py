@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # since it only documents which providers exist in stores/llm/providers/.
     EMBEDDING_BACKEND_LITERAL: List[str] = ["BGE_M3", "SWAN_LARGE"]
 
+    # Config-driven vector DB provider selection (Step 7) — identical
+    # pattern to ONEDRIVE_AUTH_BACKEND. Swapping pgvector for a future
+    # hosted vector DB is a .env edit plus one new providers/ file, never
+    # a code change in ChunkModel or any controller.
+    VECTOR_DB_BACKEND_LITERAL: List[str] = ["PGVECTOR"]
+    VECTOR_DB_BACKEND: str = "PGVECTOR"
+
     # Celery — task queue config for the on-demand sync trigger (Step 4).
     # No beat/schedule fields exist here on purpose: OneDrive sync is
     # human-initiated only, never periodic (claude.md §2.3).

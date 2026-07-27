@@ -6,14 +6,19 @@ from .db_schemes.raylab.schemes import KnowledgeChunk
 
 
 class ChunkModel(BaseDataModel):
-    """Repository for knowledge_chunks. Every method requires client_id — no exceptions."""
+    """Repository for knowledge_chunks. Every method requires client_id —
+    no exceptions. Vector-specific operations (bulk insert, similarity
+    search) are never reimplemented here as raw SQL — they delegate to
+    the injected stores/vectordb adapter (claude.md §1.2, Step 7), so
+    swapping pgvector for another vector DB never touches this file."""
 
-    def __init__(self, db_client: object):
+    def __init__(self, db_client: object, vectordb_client=None):
         super().__init__(db_client=db_client)
+        self.vectordb_client = vectordb_client
 
     @classmethod
-    async def create_instance(cls, db_client: object):
-        return cls(db_client)
+    async def create_instance(cls, db_client: object, vectordb_client=None):
+        return cls(db_client, vectordb_client=vectordb_client)
 
     async def create_chunk(self, client_id: str, chunk: KnowledgeChunk) -> KnowledgeChunk:
         chunk.client_id = client_id
@@ -25,15 +30,21 @@ class ChunkModel(BaseDataModel):
         return chunk
 
     async def insert_many_chunks(self, client_id: str, chunks: list[KnowledgeChunk], batch_size: int = 100) -> int:
-        for chunk in chunks:
-            chunk.client_id = client_id
+        return await self.vectordb_client.insert_many(client_id=client_id, chunks=chunks, batch_size=batch_size)
 
-        async with self.db_client() as session:
-            async with session.begin():
-                for i in range(0, len(chunks), batch_size):
-                    session.add_all(chunks[i:i + batch_size])
-            await session.commit()
-        return len(chunks)
+    async def search_by_vector(
+        self,
+        client_id: str,
+        query_vector: list[float],
+        top_k: int = 5,
+        metadata_filters: dict | None = None,
+    ) -> list[KnowledgeChunk]:
+        return await self.vectordb_client.search_by_vector(
+            client_id=client_id,
+            query_vector=query_vector,
+            top_k=top_k,
+            metadata_filters=metadata_filters,
+        )
 
     async def get_chunk(self, client_id: str, chunk_id):
         async with self.db_client() as session:

@@ -10,6 +10,7 @@ from models.SchemaRegistryModel import SchemaRegistryModel
 from models.StagingRowModel import StagingRowModel
 from models.ChunkModel import ChunkModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
+from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
 settings = get_settings()
 
@@ -39,7 +40,11 @@ async def get_setup_utils() -> dict:
     token_cache_model = await TokenCacheModel.create_instance(db_client)
     schema_registry_model = await SchemaRegistryModel.create_instance(db_client)
     staging_row_model = await StagingRowModel.create_instance(db_client)
-    chunk_model = await ChunkModel.create_instance(db_client)
+
+    vectordb_provider_factory = VectorDBProviderFactory(config=settings, db_client=db_client)
+    vectordb_client = vectordb_provider_factory.create(provider=settings.VECTOR_DB_BACKEND)
+
+    chunk_model = await ChunkModel.create_instance(db_client, vectordb_client=vectordb_client)
 
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
@@ -51,6 +56,7 @@ async def get_setup_utils() -> dict:
         "schema_registry_model": schema_registry_model,
         "staging_row_model": staging_row_model,
         "chunk_model": chunk_model,
+        "vectordb_client": vectordb_client,
         "onedrive_client": onedrive_client,
     }
 

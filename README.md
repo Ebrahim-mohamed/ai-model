@@ -6,7 +6,7 @@ for the build order this project follows step by step.
 
 ## Status
 
-**Step 5 of 9 complete: Dynamic 1NF Sheet Parsing & Bucket Routing.**
+**Step 7 of 9 complete: Vector DB Storage Layer (Multi-Tenant pgvector).**
 
 Implemented so far:
 - **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
@@ -15,9 +15,10 @@ Implemented so far:
 - **Step 4** — `main.py` + `celery_app.py` (the two composition roots), `routes/sync.py` (`POST /api/sync`, `GET /api/sync/{task_id}/status`), `controllers/SyncController.py`, `tasks/onedrive_sync.py`. Redis/RabbitMQ added as Docker services; **no celery-beat service, no `beat_schedule` entry** — sync stays human-initiated only.
 - **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
 - **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. No embedding yet (Step 8). See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
-- Six chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → Step 6's drop of `client_config.boilerplate_threshold` (see the Step 6 section below for its revision id).
+- **Step 7** — `stores/vectordb/*` (`VectorDBInterface`/`VectorDBEnums`/`VectorDBProviderFactory`/`providers/PGVectorProvider.py`): the Ports & Adapters abstraction over Postgres/pgvector, `client_id` required on every method. `ChunkModel.insert_many_chunks`/`search_by_vector` now delegate to this adapter instead of running their own SQL. No schema change — no new migration for this step.
+- Six chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → Step 6's drop of `client_config.boilerplate_threshold` (see the Step 6 section below for its revision id). Step 7 added no migration.
 
-Not built yet (later steps): vector storage layer polish (hybrid search), embedding shootout, retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
+Not built yet (later steps): embedding shootout (Step 8 — `knowledge_chunks.embedding` stays `NULL` until then), retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
 
 **Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
 were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
@@ -795,6 +796,162 @@ Expect, for every row:
 - Row count for a given `source_file` matches its staged row count in `staging_rows` exactly (no
   exclusions means no row/column ever silently disappears from the embedded text).
 
+## Step 7: Vector DB Storage Layer (Multi-Tenant pgvector)
+
+### Architectural additions
+
+- **`stores/vectordb/VectorDBInterface.py`** — the port: `insert_many(client_id, chunks)` and
+  `search_by_vector(client_id, query_vector, top_k, metadata_filters)`. `client_id` is required, no
+  default, on both — it is impossible to call either without a tenant scope, enforced at the
+  signature itself (claude.md §1.3).
+- **`stores/vectordb/providers/PGVectorProvider.py`** — the concrete adapter. Every query is
+  built with `.where(KnowledgeChunk.client_id == client_id)` at the SQLAlchemy level (never a
+  filter applied after the fact), plus `.where(KnowledgeChunk.embedding.isnot(None))` so
+  not-yet-embedded rows (everything, until Step 8) are excluded rather than erroring or sorting
+  arbitrarily. Similarity ordering uses pgvector's `cosine_distance()` (the `<=>` operator),
+  matching `idx_chunks_embedding_hnsw`'s `vector_cosine_ops`. When `metadata_filters` is given, it's
+  applied as a JSONB containment match (`metadata @> filters`) — never a free-text match.
+- **`stores/vectordb/VectorDBEnums.py`** / **`VectorDBProviderFactory.py`** — the same config-driven
+  selection pattern as `stores/onedrive`. Swapping pgvector for a hosted vector DB later is one new
+  `providers/` file plus one branch in the factory — `ChunkModel` and every controller stay
+  untouched.
+- **`models/ChunkModel.py`** — `insert_many_chunks` and the new `search_by_vector` no longer run
+  their own SQL; both delegate to the injected `vectordb_client`. `create_chunk`,
+  `delete_chunks_by_source_file`, and `get_total_chunks_count` are unchanged (they're plain
+  relational operations, not vector-specific, so they stay as direct repository methods).
+- **`celery_app.py`'s `get_setup_utils()`** now builds a `VectorDBProviderFactory`, creates the
+  `vectordb_client` from `settings.VECTOR_DB_BACKEND`, injects it into `ChunkModel`, and returns it
+  in the dict too (for direct use once Step 9's `RetrievalController` needs it). `main.py` is
+  **not** touched — the API process has no route that needs vector search yet (that's Step 9).
+- **`helpers/config.py`** gained `VECTOR_DB_BACKEND_LITERAL` / `VECTOR_DB_BACKEND` (default
+  `PGVECTOR`), identical pattern to `ONEDRIVE_AUTH_BACKEND`.
+
+No database migration in this step — `knowledge_chunks`/`embedding` already existed from Step 1;
+Step 7 only adds an access-layer abstraction on top of it. `celery_app.py`'s composition root did
+change, though — **restart any running Celery worker** before relying on this step's behavior in
+the live pipeline (a standalone verification script, like the one below, always picks up the
+current code since it imports fresh on each run, so this only matters for a long-lived worker
+process you started before this change).
+
+### Two things this step's test *can't* prove yet, and why
+
+1. **No real embeddings exist yet.** Step 6 deliberately leaves `embedding` `NULL` on every chunk
+   — that only gets populated in Step 8's shootout. So `search_by_vector`'s *semantic* relevance
+   can't be verified yet; what Step 7 verifies is that the storage/query **plumbing** (SQL
+   correctness, cosine ordering, `client_id` isolation) works. The script below proves that using
+   temporary placeholder vectors on **real, already-synced `raylab` content rows** it creates and
+   deletes itself — not fabricated business data, just numeric probes to exercise the SQL, deleted
+   at the end of the run. Real relevance testing is Step 8/9's job.
+2. **`cairoscan`/`technoscan` are not separate `client_id`s in this real environment.** Per
+   claude.md §3.4, they're two brand values inside `client_id='raylab'`'s own data (the `Account`
+   column, read at parse time) — there's only one real tenant onboarded right now. So the isolation
+   test below proves the same property the Implementation Plan asks for (zero cross-tenant leakage)
+   using a second, clearly-labeled probe `client_id` instead of a real second client — legitimate
+   under claude.md §4.3's carve-out for edge-case probes against real infrastructure.
+
+### Verifying — real content, temporary probe vectors, real infrastructure
+
+Run from `src/`, conda env active (this reuses `celery_app.py`'s actual composition root, so it
+exercises the real `ChunkModel` → `VectorDBProviderFactory` → `PGVectorProvider` wiring, not a
+stand-in):
+
+```bash
+cd /mnt/d/Raylab_Project/src
+python <<'EOF'
+import asyncio
+
+from celery_app import get_setup_utils
+from models.db_schemes.raylab.schemes import KnowledgeChunk
+
+DIM = 1024
+PROBE_SOURCE_FILE = "__step7_verification_probe__"
+
+
+def vector(active_index: float, magnitude: float = 1.0) -> list[float]:
+    v = [0.0] * DIM
+    v[0] = magnitude
+    v[1] = active_index
+    return v
+
+
+async def main():
+    setup = await get_setup_utils()
+    chunk_model = setup["chunk_model"]
+
+    try:
+        await chunk_model.delete_chunks_by_source_file(client_id="raylab", source_file=PROBE_SOURCE_FILE)
+        await chunk_model.delete_chunks_by_source_file(client_id="__step7_isolation_probe__", source_file=PROBE_SOURCE_FILE)
+
+        raylab_close = KnowledgeChunk(
+            client_id="raylab", content="[probe] raylab close vector",
+            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
+            embedding=vector(active_index=0.05), metadata_payload={},
+        )
+        raylab_far = KnowledgeChunk(
+            client_id="raylab", content="[probe] raylab far vector",
+            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
+            embedding=vector(active_index=0.9), metadata_payload={},
+        )
+        other_tenant = KnowledgeChunk(
+            client_id="__step7_isolation_probe__", content="[probe] other-tenant vector",
+            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
+            embedding=vector(active_index=0.0), metadata_payload={},
+        )
+
+        inserted = await chunk_model.insert_many_chunks(client_id="raylab", chunks=[raylab_close, raylab_far])
+        inserted_other = await chunk_model.insert_many_chunks(client_id="__step7_isolation_probe__", chunks=[other_tenant])
+        print(f"1) inserted {inserted} raylab probe rows, {inserted_other} other-tenant probe row")
+
+        query_vector = vector(active_index=0.0)  # closest to other_tenant, then raylab_close, then raylab_far
+        results = await chunk_model.search_by_vector(client_id="raylab", query_vector=query_vector, top_k=5)
+
+        result_ids = [str(r.id) for r in results]
+        print(f"2) search_by_vector(client_id='raylab') returned {len(results)} rows")
+        assert all(r.client_id == "raylab" for r in results)
+        assert str(raylab_close.id) in result_ids and str(raylab_far.id) in result_ids
+        assert str(other_tenant.id) not in result_ids
+        print("   PASS -- other tenant's row does NOT appear, even though it was vector-closest")
+
+        assert results[0].id == raylab_close.id
+        print("   PASS -- ordering correct: closer probe vector ranked before the farther one")
+
+        try:
+            await chunk_model.search_by_vector(query_vector=query_vector, top_k=5)
+            print("3) FAIL: search_by_vector ran without client_id")
+        except TypeError as e:
+            print(f"3) PASS -- search_by_vector refuses to run without client_id: {e}")
+
+        try:
+            await chunk_model.insert_many_chunks(chunks=[raylab_close])
+            print("4) FAIL: insert_many_chunks ran without client_id")
+        except TypeError as e:
+            print(f"4) PASS -- insert_many_chunks refuses to run without client_id: {e}")
+
+        print("ALL CHECKS PASSED")
+
+    finally:
+        await chunk_model.delete_chunks_by_source_file(client_id="raylab", source_file=PROBE_SOURCE_FILE)
+        await chunk_model.delete_chunks_by_source_file(client_id="__step7_isolation_probe__", source_file=PROBE_SOURCE_FILE)
+        await setup["db_engine"].dispose()
+
+
+asyncio.run(main())
+EOF
+```
+
+Expect `ALL CHECKS PASSED` with all four numbered checks printing `PASS`.
+
+Confirm no residue was left behind, and that the real `raylab` row count is untouched:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT count(*) FROM knowledge_chunks WHERE source_file = '__step7_verification_probe__' OR client_id = '__step7_isolation_probe__';"
+# expect 0
+
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT count(*) FROM knowledge_chunks WHERE client_id = 'raylab';"
+# expect the same real count as before this script ran (e.g. 1869 as of this writing)
+```
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -808,11 +965,12 @@ Expect, for every row:
 | `TOKEN_CACHE_ENCRYPTION_KEY` | `src/.env` | Fernet key encrypting `token_cache.encrypted_cache` (required — see Step 3) |
 | `ONEDRIVE_AUTH_BACKEND` / `ONEDRIVE_AUTH_BACKEND_LITERAL` | `src/.env` | OneDrive provider selection (currently only `MSAL_GRAPH`) |
 | `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends (Step 8 selects one) |
+| `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
 
 ## Project layout
 
-See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–5 subset exists today:
+See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–7 subset exists today:
 
 ```
 Raylab_Project/
@@ -844,6 +1002,9 @@ Raylab_Project/
 │   │   ├── onedrive/
 │   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
 │   │   │   └── providers/MSALGraphProvider.py
+│   │   ├── vectordb/
+│   │   │   ├── VectorDBInterface.py, VectorDBEnums.py, VectorDBProviderFactory.py
+│   │   │   └── providers/PGVectorProvider.py
 │   │   └── llm/templates/clients/<client_id>/   # generated, gitignored — Bucket B/C (§3.5)
 │   │       ├── prompt_templates.py
 │   │       └── system_directives.py
