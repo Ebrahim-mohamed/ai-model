@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     # since it only documents which providers exist in stores/llm/providers/.
     EMBEDDING_BACKEND_LITERAL: List[str] = ["BGE_M3", "SWAN_LARGE"]
 
+    # Config-driven embedding provider selection (Step 8) — identical
+    # pattern to VECTOR_DB_BACKEND/ONEDRIVE_AUTH_BACKEND. This is the one
+    # flag EmbeddingShootoutController's winner promotion flips — no
+    # controller or task code changes when it does.
+    EMBEDDING_BACKEND: str = "BGE_M3"
+
+    # Optional HuggingFace token for gated model repos (Step 8's
+    # Swan-Large candidate needs one; BGE-M3 is ungated and ignores this).
+    HF_TOKEN: str | None = None
+
     # Config-driven vector DB provider selection (Step 7) — identical
     # pattern to ONEDRIVE_AUTH_BACKEND. Swapping pgvector for a future
     # hosted vector DB is a .env edit plus one new providers/ file, never

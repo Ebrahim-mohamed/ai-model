@@ -9,6 +9,7 @@ from models.TokenCacheModel import TokenCacheModel
 from models.SchemaRegistryModel import SchemaRegistryModel
 from models.StagingRowModel import StagingRowModel
 from models.ChunkModel import ChunkModel
+from models.EvaluationQueryModel import EvaluationQueryModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
@@ -45,17 +46,20 @@ async def get_setup_utils() -> dict:
     vectordb_client = vectordb_provider_factory.create(provider=settings.VECTOR_DB_BACKEND)
 
     chunk_model = await ChunkModel.create_instance(db_client, vectordb_client=vectordb_client)
+    evaluation_query_model = await EvaluationQueryModel.create_instance(db_client)
 
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
 
     return {
+        "settings": settings,
         "db_engine": db_engine,
         "client_config_model": client_config_model,
         "token_cache_model": token_cache_model,
         "schema_registry_model": schema_registry_model,
         "staging_row_model": staging_row_model,
         "chunk_model": chunk_model,
+        "evaluation_query_model": evaluation_query_model,
         "vectordb_client": vectordb_client,
         "onedrive_client": onedrive_client,
     }
@@ -69,6 +73,7 @@ celery_app = Celery(
         "tasks.onedrive_sync",
         "tasks.document_parsing",
         "tasks.chunk_generation",
+        "tasks.embedding_shootout",
     ],
 )
 
@@ -98,6 +103,7 @@ celery_app.conf.update(
         "tasks.onedrive_sync.fetch_and_dispatch": {"queue": "onedrive_sync"},
         "tasks.document_parsing.parse_and_stage": {"queue": "document_parsing"},
         "tasks.chunk_generation.generate_chunks": {"queue": "chunk_generation"},
+        "tasks.embedding_shootout.run_shootout": {"queue": "embedding_shootout"},
     },
 
     timezone="UTC",

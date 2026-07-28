@@ -71,3 +71,15 @@ class ChunkModel(BaseDataModel):
             stmt = select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.client_id == client_id)
             result = await session.execute(stmt)
             return result.scalar_one()
+
+    async def get_all_chunks(self, client_id: str) -> list[KnowledgeChunk]:
+        """Every chunk for this client, unfiltered by embedding state —
+        Step 8's shootout uses this to build each candidate's own
+        in-memory scratch pool (see EmbeddingShootoutController), never
+        knowledge_chunks.embedding itself. A plain relational read, not a
+        vector operation, so it stays a direct repository method rather
+        than delegating to vectordb_client."""
+        async with self.db_client() as session:
+            stmt = select(KnowledgeChunk).where(KnowledgeChunk.client_id == client_id)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())

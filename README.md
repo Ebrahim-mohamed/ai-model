@@ -6,7 +6,7 @@ for the build order this project follows step by step.
 
 ## Status
 
-**Step 7 of 9 complete: Vector DB Storage Layer (Multi-Tenant pgvector).**
+**Step 8 of 9 complete: Embedding Model Shootout (BAAI/bge-m3 vs. Swan-Large).**
 
 Implemented so far:
 - **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
@@ -16,9 +16,10 @@ Implemented so far:
 - **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
 - **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. No embedding yet (Step 8). See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
 - **Step 7** — `stores/vectordb/*` (`VectorDBInterface`/`VectorDBEnums`/`VectorDBProviderFactory`/`providers/PGVectorProvider.py`): the Ports & Adapters abstraction over Postgres/pgvector, `client_id` required on every method. `ChunkModel.insert_many_chunks`/`search_by_vector` now delegate to this adapter instead of running their own SQL. No schema change — no new migration for this step.
-- Six chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → Step 6's drop of `client_config.boilerplate_threshold` (see the Step 6 section below for its revision id). Step 7 added no migration.
+- **Step 8** — `stores/llm/*` (`LLMInterface`/`LLMEnums`/`LLMProviderFactory`/`providers/{BGEM3Provider,SwanLargeProvider}.py`); `controllers/EmbeddingShootoutController.py` (orchestrates the benchmark, no embedding math of its own); `models/EvaluationQueryModel.py` + `evaluation_queries`/`shootout_results` tables; `tasks/embedding_shootout.py`. **BGE-M3 is fully real and working**; **Swan-Large is deferred** — its HuggingFace repo is gated (401 on both the model page and API) and it's built on a 7B-parameter backbone this dev machine's hardware (4GB VRAM, 3.7GB WSL RAM) can't run. See the Step 8 section below for the full research and why the architecture is complete regardless.
+- Seven chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → `ff0b5276e5cb` (Step 6's drop of `client_config.boilerplate_threshold`) → `83b89604b9c4` (Step 8's `evaluation_queries` + `shootout_results`). Step 7 added no migration.
 
-Not built yet (later steps): embedding shootout (Step 8 — `knowledge_chunks.embedding` stays `NULL` until then), retrieval endpoint, `TemplateParser` extension (reads the Bucket B/C files Step 5 writes — Step 9's job). Do not assume any of these exist.
+Not built yet (later step): the hybrid retrieval endpoint (Step 9) and `TemplateParser` extension (reads the Bucket B/C files Step 5 writes). `knowledge_chunks.embedding` stays `NULL` in production until a shootout winner is promoted via `EMBEDDING_BACKEND` — Step 8 only ever writes to its own in-memory scratch pool, never that column. Do not assume anything beyond this exists.
 
 **Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
 were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
@@ -952,6 +953,211 @@ docker exec raylab-pgvector psql -U postgres -d raylab -c \
 # expect the same real count as before this script ran (e.g. 1869 as of this writing)
 ```
 
+## Step 8: Embedding Model Shootout (BAAI/bge-m3 vs. Swan-Large)
+
+### Real research findings that shaped this step
+
+Before writing any code, two real, concrete blockers were found while researching Swan-Large
+(`UBC-NLP/swan-large`), the proposal's named second candidate:
+
+1. **Its HuggingFace repo is almost certainly gated.** Both `huggingface.co/UBC-NLP/swan-large`
+   and its API endpoint (`/api/models/UBC-NLP/swan-large`) return `401 Unauthorized` — normal
+   public model pages don't do that. Downloading it for real needs a HuggingFace account,
+   accepting a license/terms agreement, and a valid `HF_TOKEN`.
+2. **It's architecturally much heavier than the proposal assumed.** The published paper
+   (arXiv:2411.01192) confirms Swan-Large is built on **ArMistral-7B** — a 7-billion-parameter
+   Mistral-based Arabic LLM — not a lightweight BERT-style encoder like BGE-M3 (~580MB). A
+   7B-parameter model needs roughly 14GB+ just to load its weights in fp16. This dev machine's
+   actual hardware was checked directly: GPU is a **Quadro M2200 with 4GB VRAM**, and **WSL2 is
+   allocated only 3.7GB of total RAM** — both far short of what Swan-Large needs, independent of
+   the gating issue.
+
+Given both blockers, the decision (confirmed with the user) was: **build the complete,
+swappable architecture now; BGE-M3 fully working; Swan-Large wired into the same interface but
+deliberately failing loudly rather than fabricating output**, so promoting a real, working
+Swan-Large later — once gated access and adequate hardware exist — is a config change, not a
+rewrite.
+
+### Architectural additions
+
+- **`stores/llm/LLMInterface.py`** — the port: `embed_text(texts, is_query)` and an
+  `embedding_dimension` property. `ChunkingController` (a future wiring, not yet done — see below)
+  and `RetrievalController` (Step 9) will only ever call this interface, never a specific model
+  class.
+- **`stores/llm/providers/BGEM3Provider.py`** — real, working. Lazily loads
+  `BAAI/bge-m3` via `sentence-transformers` on first use (class-level cache, shared across
+  instances — the model is thread-safe for inference), prepends the model's documented query
+  instruction prefix only to query texts (never document texts), and always encodes with
+  `normalize_embeddings=True` (required for cosine similarity to be meaningful). 1024-dim output —
+  matches `knowledge_chunks.embedding`'s existing column with no schema change.
+- **`stores/llm/providers/SwanLargeProvider.py`** — deliberately non-functional right now. Its
+  `_get_model()`/`embedding_dimension` both raise `SwanLargeUnavailableError` with the exact
+  research findings above, rather than guessing a prefix convention or a fake dimension. The
+  proposal itself (Implementation Plan, Step 8) explicitly warns against assuming BGE-M3's prefix
+  rules apply to Swan-Large without checking its own model card — since gated access blocks
+  checking that, this class leaves `QUERY_PREFIX = ""` marked `UNCONFIRMED` rather than guessing.
+- **`stores/llm/LLMEnums.py`** / **`LLMProviderFactory.py`** — same config-driven pattern as
+  `stores/onedrive`/`stores/vectordb`. Both `BGE_M3` and `SWAN_LARGE` are registered even though
+  the latter can't run yet — the enum/factory represent the interface contract, not current
+  runnability.
+- **`controllers/EmbeddingShootoutController.py`** — orchestration only. For each candidate model:
+  embeds this client's **entire real, already-chunked content** (`ChunkModel.get_all_chunks`) into
+  that model's own **in-memory scratch pool** (a plain NumPy matrix — never
+  `knowledge_chunks.embedding` itself, since the production column belongs to whichever model is
+  eventually promoted, and candidates aren't guaranteed to share its dimensionality); scores top-K
+  retrieval accuracy against `evaluation_queries` using a plain dot product (mathematically cosine
+  similarity here, since every provider normalizes its output). A candidate that raises during
+  loading (Swan-Large, right now) is caught **per-model** — one candidate's failure never blocks
+  the other's real result from being scored and persisted.
+- **`models/EvaluationQueryModel.py`** + **`evaluation_queries`**/**`shootout_results`** tables —
+  the shared benchmark query set and its scored results. `evaluation_queries` pairs a real
+  Egyptian-Arabic-style question with the real `knowledge_chunks.id` that answers it — grounded in
+  this client's actual synced content, not fabricated business facts (claude.md §4.3); only the
+  questions themselves are a designed evaluation harness, exactly as the proposal describes for
+  bootstrapping a benchmark before real user query logs exist. `shootout_results.top_k_accuracy`
+  and `.error_message` are both nullable — a candidate that can't run still gets a row recording
+  *why*, never a silently missing result.
+- **`tasks/embedding_shootout.py`** (`run_shootout`) — the Celery task. Time limit overridden to
+  1800s (a first run also downloads BGE-M3's weights and CPU-encodes the client's full real chunk
+  set). No HTTP route exists for this yet, matching the Implementation Plan (Step 8 lists no
+  route) — it's triggered directly via `.delay()`, the same way earlier steps' verification
+  scripts have always invoked tasks directly when no endpoint exists for them.
+- **`ChunkModel.get_all_chunks(client_id)`** — new plain repository read (not vector-specific, so
+  it doesn't delegate to `vectordb_client`) backing the controller's scratch-pool construction.
+- **`helpers/config.py`** gained `EMBEDDING_BACKEND` (default `BGE_M3` — the one that actually
+  works right now) and `HF_TOKEN` (optional, only consumed by `SwanLargeProvider`).
+- **`celery_app.py`** — composition root now also builds `EvaluationQueryModel` and registers
+  `tasks.embedding_shootout` + its own queue; `get_setup_utils()`'s dict also exposes `settings`
+  directly now (the task needs `EMBEDDING_BACKEND_LITERAL` and `HF_TOKEN`, not just the models).
+
+**Not wired up yet, on purpose:** `ChunkingController`/`chunk_generation.py` still leave
+`embedding` `NULL` — this step is the shootout only. Promoting a winner to actually populate
+`knowledge_chunks.embedding` on every sync is a follow-on wiring change once a real winner is
+chosen (i.e. once Swan-Large either becomes real, or BGE-M3 wins by default) — doing it now would
+mean writing production embeddings from a benchmark that hasn't run its second candidate for real
+yet.
+
+### New dependencies
+
+`torch` **must** be installed from PyTorch's CPU-only wheel index *before* the rest of
+`requirements.txt` — a plain `pip install torch` on Linux pulls the full CUDA dependency bundle
+(cublas, cudnn, etc. — 2GB+ of `nvidia-*` wheels) by default, which this dev machine can't even
+download: WSL2's `/tmp` is a RAM-backed `tmpfs` capped at ~1.9GB (matching its 3.7GB total RAM
+allocation), so the CUDA download blows past it with `OSError: No space left on device` even
+though the real disk has hundreds of GB free. The CPU-only wheel avoids this entirely — it's a
+fraction of the size and doesn't touch `/tmp` for anything close to that long:
+
+```bash
+conda activate raylab
+cd /mnt/d/Raylab_Project/src
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+pip install -r requirements.txt   # torch already satisfied; installs sentence-transformers, numpy
+```
+This machine's GPU (Quadro M2200, 4GB VRAM) offers no real benefit for BGE-M3 anyway and is
+nowhere near enough for Swan-Large regardless — install a real CUDA build yourself only if you
+move this to GPU hardware that can actually use it.
+
+### Database migration — `evaluation_queries` + `shootout_results`
+
+```bash
+cd src/models/db_schemes/raylab
+alembic revision --autogenerate -m "create evaluation_queries and shootout_results"
+alembic upgrade head
+alembic current   # 83b89604b9c4 (head)
+```
+
+Confirm at the DB level:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c "\d evaluation_queries"
+docker exec raylab-pgvector psql -U postgres -d raylab -c "\d shootout_results"
+```
+
+### Verifying — real content, real BGE-M3, Swan-Large's expected real failure
+
+This seeds a real, grounded benchmark query set (8 questions, each paired with a genuine
+`knowledge_chunks.id` already synced from `raylab`'s real OneDrive content across four different
+real sheets), then runs the actual shootout. Run from `src/`, conda env active — **the first run
+downloads BGE-M3's ~580MB weights and CPU-encodes the client's full real chunk set, so expect this
+to take a few minutes**:
+
+```bash
+cd /mnt/d/Raylab_Project/src
+python <<'EOF'
+import asyncio
+
+from celery_app import get_setup_utils
+from controllers.EmbeddingShootoutController import EmbeddingShootoutController
+from stores.llm.LLMProviderFactory import LLMProviderFactory
+
+CLIENT_ID = "raylab"
+
+QUERIES = [
+    {"query_text": "هل فرع المهندسين فيه كرسي متحرك؟", "expected_chunk_id": "3055e5f4-f24e-4ff3-b88a-a5df5417a3f1"},
+    {"query_text": "مواعيد المعمل في فرع الجيزة يوم الجمعة ايه؟", "expected_chunk_id": "ed564227-a909-4439-bed9-b713864e9acf"},
+    {"query_text": "هل فيه اسانسير في فرع اكتوبر؟", "expected_chunk_id": "80d45936-2b8b-440d-83b7-5d3e9d05d25e"},
+    {"query_text": "هل ينفع اشرب مية قبل سونار البطن والحوض؟", "expected_chunk_id": "7299fb09-6146-442a-ab00-1d6dd6a5c670"},
+    {"query_text": "عايز اعرف التحضير المطلوب لسونار البروستاتا عن طريق الشرج", "expected_chunk_id": "94dcf2ca-732b-40f8-883f-abe942f27bcb"},
+    {"query_text": "انا عضو نقابة المهندسين هل ممكن احضر الموافقة من الفرع؟", "expected_chunk_id": "9641cc47-20c1-4434-b7fb-0ae248ef182e"},
+    {"query_text": "نقابة تجاريين القاهرة الموافقة بتتحضر منين، من الفرع ولا النقابة؟", "expected_chunk_id": "452351f5-68b2-408f-82a1-100298811a8d"},
+    {"query_text": "عايز اعرف تفاصيل تحليل فحص الخلايا عن طريق سائل من الجسم", "expected_chunk_id": "f5e1c973-c23e-47cb-8a9b-250d4601b881"},
+]
+
+
+async def main():
+    setup = await get_setup_utils()
+    settings = setup["settings"]
+    evaluation_query_model = setup["evaluation_query_model"]
+
+    try:
+        seeded = await evaluation_query_model.seed_queries(client_id=CLIENT_ID, queries=QUERIES)
+        print(f"1) seeded {seeded} real, grounded benchmark queries for client_id={CLIENT_ID!r}")
+
+        controller = EmbeddingShootoutController(
+            chunk_model=setup["chunk_model"],
+            evaluation_query_model=evaluation_query_model,
+            llm_provider_factory=LLMProviderFactory(config=settings),
+        )
+
+        total_chunks = await setup["chunk_model"].get_total_chunks_count(CLIENT_ID)
+        print(f"2) running shootout against {total_chunks} real chunks -- this can take a few minutes")
+        results = await controller.run_shootout(client_id=CLIENT_ID, model_names=settings.EMBEDDING_BACKEND_LITERAL, top_k=5)
+
+        for r in results:
+            if r["error"] is None:
+                print(f"   PASS -- {r['model_name']}: top_5_accuracy = {r['top_k_accuracy']:.3f}")
+            else:
+                print(f"   EXPECTED FAILURE -- {r['model_name']}: {r['error'][:200]}")
+
+        assert any(r["model_name"] == "BGE_M3" and r["error"] is None for r in results)
+        assert any(r["model_name"] == "SWAN_LARGE" and r["error"] is not None for r in results)
+        print("ALL CHECKS PASSED")
+
+    finally:
+        await setup["db_engine"].dispose()
+
+
+asyncio.run(main())
+EOF
+```
+
+Confirm at the DB level:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT model_name, top_k_accuracy, query_count, top_k, left(error_message, 80) AS error FROM shootout_results WHERE client_id='raylab' ORDER BY evaluated_at;"
+```
+Expect: one `BGE_M3` row with a real, non-null `top_k_accuracy` (a real number between 0 and 1 —
+not a fabricated/expected value, whatever the actual model produces against this real query set),
+and one `SWAN_LARGE` row with `top_k_accuracy = NULL` and a populated `error_message` explaining
+the gated-access/hardware blocker — a recorded, explained failure, never a silently missing row.
+
+### If/when Swan-Large becomes real
+
+Once gated HuggingFace access is granted (accept the license on its model page, generate a token)
+and this runs on hardware with enough VRAM/RAM: set `HF_TOKEN` in `.env`, confirm Swan-Large's real
+query/document prefix convention from its actual model card (never assume BGE-M3's), fill in
+`SwanLargeProvider.QUERY_PREFIX` and `embedding_dimension` for real, and re-run the script above —
+no other file changes, since both candidates already sit behind the same `LLMInterface`.
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -964,13 +1170,15 @@ docker exec raylab-pgvector psql -U postgres -d raylab -c \
 | `MSAL_CLIENT_ID` | `src/.env` | Azure AD public-client app ID (required — see Step 3) |
 | `TOKEN_CACHE_ENCRYPTION_KEY` | `src/.env` | Fernet key encrypting `token_cache.encrypted_cache` (required — see Step 3) |
 | `ONEDRIVE_AUTH_BACKEND` / `ONEDRIVE_AUTH_BACKEND_LITERAL` | `src/.env` | OneDrive provider selection (currently only `MSAL_GRAPH`) |
-| `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends (Step 8 selects one) |
+| `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends |
+| `EMBEDDING_BACKEND` | `src/.env` | Which embedding backend is production (default `BGE_M3` — the one that actually works) |
+| `HF_TOKEN` | `src/.env` | Optional HuggingFace token for gated repos (Swan-Large only; BGE-M3 ignores this) |
 | `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
 
 ## Project layout
 
-See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–7 subset exists today:
+See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–8 subset exists today:
 
 ```
 Raylab_Project/
@@ -993,11 +1201,13 @@ Raylab_Project/
 │   │   ├── BaseController.py
 │   │   ├── SyncController.py
 │   │   ├── DocumentParsingController.py
-│   │   └── ChunkingController.py
+│   │   ├── ChunkingController.py
+│   │   └── EmbeddingShootoutController.py
 │   ├── tasks/
 │   │   ├── onedrive_sync.py
 │   │   ├── document_parsing.py
-│   │   └── chunk_generation.py
+│   │   ├── chunk_generation.py
+│   │   └── embedding_shootout.py
 │   ├── stores/
 │   │   ├── onedrive/
 │   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
@@ -1005,9 +1215,12 @@ Raylab_Project/
 │   │   ├── vectordb/
 │   │   │   ├── VectorDBInterface.py, VectorDBEnums.py, VectorDBProviderFactory.py
 │   │   │   └── providers/PGVectorProvider.py
-│   │   └── llm/templates/clients/<client_id>/   # generated, gitignored — Bucket B/C (§3.5)
-│   │       ├── prompt_templates.py
-│   │       └── system_directives.py
+│   │   └── llm/
+│   │       ├── LLMInterface.py, LLMEnums.py, LLMProviderFactory.py
+│   │       ├── providers/BGEM3Provider.py (real, working), providers/SwanLargeProvider.py (deferred)
+│   │       └── templates/clients/<client_id>/   # generated, gitignored — Bucket B/C (§3.5)
+│   │           ├── prompt_templates.py
+│   │           └── system_directives.py
 │   ├── utils/
 │   │   ├── dynamic_schema_loader.py   # stateless auto-discovery call site
 │   │   └── template_file_writer.py    # the only code allowed to write templates/clients/*
@@ -1018,9 +1231,10 @@ Raylab_Project/
 │       ├── SchemaRegistryModel.py     # get_or_register / update_bucket / set_mandatory_fields
 │       ├── TokenCacheModel.py         # Fernet-encrypted, client_id-scoped
 │       ├── StagingRowModel.py         # Bucket A only
+│       ├── EvaluationQueryModel.py    # Step 8 benchmark query set + scored results
 │       ├── enums/BucketEnum.py
 │       └── db_schemes/raylab/
-│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry,token_cache,staging_row}.py
+│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry,token_cache,staging_row,evaluation_query,shootout_result}.py
 │           ├── alembic.ini.example
 │           └── alembic/{env.py, script.py.mako, versions/}
 ├── .gitignore
