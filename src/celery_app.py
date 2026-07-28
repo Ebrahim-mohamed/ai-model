@@ -74,6 +74,7 @@ celery_app = Celery(
         "tasks.document_parsing",
         "tasks.chunk_generation",
         "tasks.embedding_shootout",
+        "tasks.embedding_generation",
     ],
 )
 
@@ -104,6 +105,7 @@ celery_app.conf.update(
         "tasks.document_parsing.parse_and_stage": {"queue": "document_parsing"},
         "tasks.chunk_generation.generate_chunks": {"queue": "chunk_generation"},
         "tasks.embedding_shootout.run_shootout": {"queue": "embedding_shootout"},
+        "tasks.embedding_generation.generate_embeddings": {"queue": "embedding_generation"},
     },
 
     timezone="UTC",

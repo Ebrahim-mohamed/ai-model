@@ -46,11 +46,20 @@ services:
   rabbitmq:
     image: rabbitmq:4.1.2-management-alpine
     container_name: raylab-rabbitmq
+    # Pinned, not left to Docker's random per-container hostname:
+    # RabbitMQ's Mnesia queue/message data is keyed by node name
+    # (rabbit@<hostname>). An unpinned hostname means every container
+    # recreation gets a new node identity and silently can't see the
+    # previous node's durable queues/messages anymore, even though
+    # they're still sitting on the same persisted volume — this bit us
+    # once already recreating this container to apply consumer_timeout.
+    hostname: raylab-rabbitmq
     ports:
       - "5673:5672"    # AMQP port
       - "15673:15672"  # Management UI port
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     env_file:
       - ./env/.env.rabbitmq
     networks:

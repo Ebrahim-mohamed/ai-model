@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String
+from sqlalchemy import Column, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from .raylab_base import SQLAlchemyBase
@@ -29,3 +29,10 @@ class ClientConfig(SQLAlchemyBase):
     # scope; this is the smallest mechanism that still makes the resolution
     # server-controlled rather than trusting the caller's word for it.
     admin_api_key = Column(String, nullable=True, unique=True)
+
+    # Step 9 — hybrid retrieval business thresholds. Never a hardcoded
+    # Python constant (claude.md §1.3 names top-K and RRF's k explicitly):
+    # a client with a small, dense knowledge base and one with a huge,
+    # noisy one plausibly want different values here.
+    retrieval_top_k = Column(Integer, nullable=False, server_default="5")
+    rrf_k = Column(Integer, nullable=False, server_default="60")

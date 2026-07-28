@@ -46,6 +46,48 @@ class ChunkModel(BaseDataModel):
             metadata_filters=metadata_filters,
         )
 
+    async def hybrid_search(
+        self,
+        client_id: str,
+        query_text: str,
+        query_vector: list[float],
+        candidate_k: int,
+        rrf_k: int,
+        top_k: int,
+        metadata_filters: dict | None = None,
+    ) -> list[KnowledgeChunk]:
+        return await self.vectordb_client.hybrid_search(
+            client_id=client_id,
+            query_text=query_text,
+            query_vector=query_vector,
+            candidate_k=candidate_k,
+            rrf_k=rrf_k,
+            top_k=top_k,
+            metadata_filters=metadata_filters,
+        )
+
+    async def update_embeddings(self, client_id: str, embeddings: dict) -> int:
+        return await self.vectordb_client.update_embeddings(client_id=client_id, embeddings=embeddings)
+
+    async def get_chunks_without_embedding(self, client_id: str, source_file: str | None = None) -> list[KnowledgeChunk]:
+        """Every chunk still missing an embedding — scoped to source_file
+        when given (the freshly delete-and-reinserted batch a sync just
+        produced), or every un-embedded chunk for this client when not
+        (a backfill covering everything synced before an embedding
+        backend was promoted). A plain relational read (filtering on
+        embedding being NULL, not comparing vectors), so it stays a
+        direct repository method rather than delegating to
+        vectordb_client — the same reasoning as get_all_chunks."""
+        async with self.db_client() as session:
+            stmt = select(KnowledgeChunk).where(
+                KnowledgeChunk.client_id == client_id,
+                KnowledgeChunk.embedding.is_(None),
+            )
+            if source_file is not None:
+                stmt = stmt.where(KnowledgeChunk.source_file == source_file)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
     async def get_chunk(self, client_id: str, chunk_id):
         async with self.db_client() as session:
             stmt = select(KnowledgeChunk).where(

@@ -44,7 +44,15 @@ async def _generate_chunks(task_instance, client_id: str, source_file: str):
 
         logger.info(f"client_id={client_id!r} source_file={source_file!r}: generated {inserted} chunks")
 
-        return {"client_id": client_id, "source_file": source_file, "chunks_generated": inserted}
+        from tasks.embedding_generation import generate_embeddings
+        embedding_task = generate_embeddings.delay(client_id=client_id, source_file=source_file)
+
+        return {
+            "client_id": client_id,
+            "source_file": source_file,
+            "chunks_generated": inserted,
+            "embedding_task_id": embedding_task.id,
+        }
 
     finally:
         if setup and setup.get("db_engine"):

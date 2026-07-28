@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     VECTOR_DB_BACKEND_LITERAL: List[str] = ["PGVECTOR"]
     VECTOR_DB_BACKEND: str = "PGVECTOR"
 
+    # Config-driven re-ranker provider selection (Step 9) — identical
+    # pattern to VECTOR_DB_BACKEND. A new re-ranking vendor is one new
+    # providers/ file plus one branch in RerankerProviderFactory.
+    RERANKER_BACKEND_LITERAL: List[str] = ["CROSS_ENCODER"]
+    RERANKER_BACKEND: str = "CROSS_ENCODER"
+
     # Celery — task queue config for the on-demand sync trigger (Step 4).
     # No beat/schedule fields exist here on purpose: OneDrive sync is
     # human-initiated only, never periodic (claude.md §2.3).

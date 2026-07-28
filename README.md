@@ -6,7 +6,11 @@ for the build order this project follows step by step.
 
 ## Status
 
-**Step 8 of 9 complete: Embedding Model Shootout (BAAI/bge-m3 vs. Swan-Large).**
+**Step 9 of 9 complete: Hybrid Retrieval Endpoint.** All nine Implementation Plan steps are now
+built. Real end-to-end verification of the retrieval endpoint's dense-vector leg is still pending
+a full production embedding backfill finishing on this dev machine's hardware (see the Step 9
+section below) — BM25/keyword retrieval, RRF fusion, re-ranking, metadata-filter validation, and
+`client_id` isolation are all already verified against real data.
 
 Implemented so far:
 - **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
@@ -14,12 +18,16 @@ Implemented so far:
 - **Step 3** — `stores/onedrive/*` (Interface/Enums/Factory/`MSALGraphProvider`), `TokenCacheModel` (Fernet-encrypted, DB-backed token cache, `client_id`-scoped, never plaintext).
 - **Step 4** — `main.py` + `celery_app.py` (the two composition roots), `routes/sync.py` (`POST /api/sync`, `GET /api/sync/{task_id}/status`), `controllers/SyncController.py`, `tasks/onedrive_sync.py`. Redis/RabbitMQ added as Docker services; **no celery-beat service, no `beat_schedule` entry** — sync stays human-initiated only.
 - **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
-- **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. No embedding yet (Step 8). See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
+- **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
 - **Step 7** — `stores/vectordb/*` (`VectorDBInterface`/`VectorDBEnums`/`VectorDBProviderFactory`/`providers/PGVectorProvider.py`): the Ports & Adapters abstraction over Postgres/pgvector, `client_id` required on every method. `ChunkModel.insert_many_chunks`/`search_by_vector` now delegate to this adapter instead of running their own SQL. No schema change — no new migration for this step.
-- **Step 8** — `stores/llm/*` (`LLMInterface`/`LLMEnums`/`LLMProviderFactory`/`providers/{BGEM3Provider,SwanLargeProvider}.py`); `controllers/EmbeddingShootoutController.py` (orchestrates the benchmark, no embedding math of its own); `models/EvaluationQueryModel.py` + `evaluation_queries`/`shootout_results` tables; `tasks/embedding_shootout.py`. **BGE-M3 is fully real and working**; **Swan-Large is deferred** — its HuggingFace repo is gated (401 on both the model page and API) and it's built on a 7B-parameter backbone this dev machine's hardware (4GB VRAM, 3.7GB WSL RAM) can't run. See the Step 8 section below for the full research and why the architecture is complete regardless.
-- Seven chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → `ff0b5276e5cb` (Step 6's drop of `client_config.boilerplate_threshold`) → `83b89604b9c4` (Step 8's `evaluation_queries` + `shootout_results`). Step 7 added no migration.
+- **Step 8** — `stores/llm/*` (`LLMInterface`/`LLMEnums`/`LLMProviderFactory`/`providers/{BGEM3Provider,SwanLargeProvider}.py`); `controllers/EmbeddingShootoutController.py` (orchestrates the benchmark, no embedding math of its own); `models/EvaluationQueryModel.py` + `evaluation_queries`/`shootout_results` tables; `tasks/embedding_shootout.py`. **BGE-M3 is fully real and working**; **Swan-Large is deferred** — its HuggingFace repo is gated (401 on both the model page and API) and it's built on a 7B-parameter backbone this dev machine's hardware can't run. See the Step 8 section below for the full research and why the architecture is complete regardless.
+- **Production embedding generation** (bridges Step 8 into actual use) — `controllers/EmbeddingGenerationController.py`, `tasks/embedding_generation.py` (`generate_embeddings`), chained automatically after every `generate_chunks` run, plus reusable standalone as a backfill for chunks synced before an embedding backend was promoted. `stores/vectordb`'s `VectorDBInterface`/`PGVectorProvider` gained `update_embeddings`; `ChunkModel` gained `update_embeddings` (delegating) + `get_chunks_without_embedding`. Writes commit incrementally per batch, never one all-or-nothing write. See the note in the Step 9 section below.
+- **Step 9** — `routes/retrieval.py` (`POST /api/retrieve`), `routes/schemes/retrieval.py`, `controllers/RetrievalController.py` (validates `metadata_filters` against `client_config.allowed_metadata_keys`, embeds the query, calls hybrid search, then re-ranks), `stores/reranker/*` (`RerankerInterface`/`RerankerEnums`/`RerankerProviderFactory`/`providers/CrossEncoderProvider.py`). `PGVectorProvider` gained `search_by_bm25` and `hybrid_search` (dense + sparse + Reciprocal Rank Fusion). `client_config` gained `retrieval_top_k`/`rrf_k` — never hardcoded (claude.md §1.3). See the Step 9 section below.
+- Nine chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → `ff0b5276e5cb` (Step 6's drop of `client_config.boilerplate_threshold`) → `83b89604b9c4` (Step 8's `evaluation_queries` + `shootout_results`) → `32f61443e199` (Step 9's `client_config.retrieval_top_k`/`rrf_k`). Step 7 and the embedding-generation addition added no migration.
 
-Not built yet (later step): the hybrid retrieval endpoint (Step 9) and `TemplateParser` extension (reads the Bucket B/C files Step 5 writes). `knowledge_chunks.embedding` stays `NULL` in production until a shootout winner is promoted via `EMBEDDING_BACKEND` — Step 8 only ever writes to its own in-memory scratch pool, never that column. Do not assume anything beyond this exists.
+Not built (out of Section 2's scope entirely): `TemplateParser`'s actual runtime consumer — the
+WhatsApp/Voice workflows (Sections 3/4) that would call it — since those are explicitly out of
+scope (claude.md §2.1). Everything in the nine Implementation Plan steps for Section 2 exists.
 
 **Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
 were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
@@ -432,6 +440,18 @@ cd ..
 
 Redis is reachable at `localhost:6380`, RabbitMQ's AMQP port at `localhost:5673` (management UI
 at `localhost:15673`).
+
+`docker/rabbitmq/rabbitmq.conf` (mounted read-only into the container) sets
+`consumer_timeout = 43200000` (12h) — RabbitMQ's default (30 min) closes the channel with a
+`PreconditionFailed (406)` if a long-running task (Step 8/9's CPU-only embedding generation,
+observed exceeding 30 minutes per file on this dev machine's hardware) doesn't ack in time, since
+`task_acks_late=True` means the ack only happens when the task *finishes*. The service also pins
+`hostname: raylab-rabbitmq` — without it, RabbitMQ's Mnesia queue/message data is keyed by
+Docker's randomized per-container hostname, so any container recreation (e.g. to pick up a config
+change) silently loses visibility into the previous node's durable queues, even though the data is
+still on the same persisted volume. Both were found and fixed the hard way — a real
+`consumer_timeout` crash mid-embedding, then a real lost-queue incident from recreating the
+container without a pinned hostname.
 
 ### App environment file
 
@@ -1158,6 +1178,181 @@ query/document prefix convention from its actual model card (never assume BGE-M3
 `SwanLargeProvider.QUERY_PREFIX` and `embedding_dimension` for real, and re-run the script above —
 no other file changes, since both candidates already sit behind the same `LLMInterface`.
 
+### Automatic Embedding Generation (promoting BGE-M3 to production)
+
+Steps 5–8, as originally built, left a real gap: `chunk_generation.py` wrote every real chunk
+with `embedding = NULL`, and Step 8's shootout deliberately never wrote back to that column (it
+only ever built its own in-memory scratch pool — see above). Nothing in the sync pipeline actually
+populated production embeddings. This section closes that gap.
+
+**What was added:**
+- **`stores/vectordb/VectorDBInterface.py` / `PGVectorProvider.py`** gained `update_embeddings(client_id, embeddings)` —
+  bulk-writes computed vectors back onto existing rows, still scoped by `client_id` at the SQL level.
+- **`models/ChunkModel.py`** gained `update_embeddings` (delegates to the vectordb adapter) and
+  `get_chunks_without_embedding(client_id, source_file=None)` (a plain relational read — filtering
+  on `embedding IS NULL`, not comparing vectors — so it stays a direct repository method).
+- **`controllers/EmbeddingGenerationController.py`** — `embed_chunks(client_id, source_file=None)`.
+  Fetches whatever's missing an embedding, embeds it in small batches via whichever provider it's
+  handed (`settings.EMBEDDING_BACKEND` via `LLMProviderFactory` — never constructed by the
+  controller itself), and **commits incrementally, one batch at a time**. If interrupted partway
+  (crash, Celery time-limit kill, `Ctrl+C`), already-embedded chunks are never lost, and re-running
+  the exact same call only ever processes what's *still* missing — the selection criterion is
+  always `embedding IS NULL`, never a positional offset that could skip or repeat rows.
+- **`tasks/embedding_generation.py`** (`generate_embeddings`) — the Celery task. Two ways it's used:
+  1. **Automatic, chained**: `tasks/chunk_generation.py` now calls `generate_embeddings.delay(client_id=client_id, source_file=source_file)` right after inserting a sync's chunks — every future sync
+     embeds its own freshly-chunked rows with no manual step.
+  2. **Manual backfill**: call the exact same task **without `source_file`** to process every chunk
+     across a client's whole history still missing an embedding — this covers everything synced
+     before this wiring existed. Same task, same controller, same code — just a wider scope.
+- **`client_config` schema unchanged** — this addition needed no new migration.
+
+**A real, honest caveat about hardware**: this dev machine's BGE-M3 CPU encoding is extremely slow
+(the Step 8 shootout above took multiple hours to encode this same ~1,869-chunk corpus). A full
+backfill will likely take a very long time here. This is why `generate_embeddings`' task time limit
+is set to 21600s (6h, overriding the global 600s default) — and why being interrupted is *safe*:
+thanks to the incremental-commit design, re-running the identical command afterward simply resumes
+from whatever's still `NULL`, never redoing already-embedded rows or losing progress.
+
+### Running the backfill for existing data
+
+```bash
+# 1. Apply the migration if you haven't already (no-op if already at head)
+cd src/models/db_schemes/raylab
+alembic upgrade head
+alembic current   # 32f61443e199 (head)
+
+# 2. Restart the Celery worker so it picks up the new task + queue
+cd /mnt/d/Raylab_Project/src
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
+```
+
+In a separate terminal, enqueue the backfill (no `source_file` = every un-embedded chunk for this client):
+```bash
+cd /mnt/d/Raylab_Project/src
+python <<'EOF'
+from tasks.embedding_generation import generate_embeddings
+task = generate_embeddings.delay(client_id="raylab")
+print("enqueued task_id:", task.id)
+EOF
+```
+
+Watch real, incremental progress either in the Celery worker's own log (`embedded X/Y chunks so
+far` lines), or by re-running this query periodically — the count only ever goes up, never resets:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT count(*) AS total, count(embedding) AS with_embedding FROM knowledge_chunks WHERE client_id='raylab';"
+```
+Expect `with_embedding` to climb from `0` toward `total` over time. If it stalls or the task gets
+killed by the time limit, just re-run the `generate_embeddings.delay(...)` script above — it picks
+up exactly where it left off.
+
+### Testing that automatic embedding works for future syncs
+
+Trigger a real sync in Postman as usual (`POST /api/sync`), then poll the chained task IDs in order
+— `fetch_and_dispatch` → `parse_and_stage` → `generate_chunks` → **`embedding_task_id`** (new, in
+`generate_chunks`'s result) — until the last one reports `SUCCESS`. Confirm at the DB level that the
+specific file you just synced now has embeddings:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT count(*) AS total, count(embedding) AS with_embedding FROM knowledge_chunks WHERE client_id='raylab' AND source_file='<the file you synced>';"
+```
+Expect `with_embedding = total` for that file once the embedding task finishes — no manual backfill
+step needed for anything synced from now on.
+
+## Step 9: Hybrid Retrieval Endpoint
+
+### Architectural additions
+
+- **`routes/schemes/retrieval.py`** — `RetrieveRequest` (`query`, optional `metadata_filters`) /
+  `RetrieveResponse` (`client_id`, `query`, `results: list[RetrievedChunk]`). `top_k` is
+  deliberately **not** a request field — it's a per-tenant `client_config.retrieval_top_k` value,
+  never something a caller can override (claude.md §1.3).
+- **`routes/retrieval.py`** — `POST /api/retrieve`. `client_id` is resolved server-side from the
+  `X-Admin-Api-Key` header — the exact same mechanism `routes/sync.py` already uses
+  (`ClientConfigModel.get_client_id_by_admin_api_key`). Section 2 has no broader session/auth
+  system in scope (the Implementation Plan's "resolves client_id from session context" language
+  refers to Section 3/4's WhatsApp/Voice context-aware routing, which is explicitly out of scope —
+  claude.md §2.1); reusing the already-established admin-key mechanism was the deliberate choice
+  over inventing a second, parallel auth path for one endpoint. Transport only — no DB session or
+  business logic touched directly.
+- **`controllers/RetrievalController.py`** — orchestration only:
+  1. Fetches `client_config`, validates any `metadata_filters` keys against
+     `client_config.allowed_metadata_keys` — an unrecognized key raises `MetadataFilterValidationError`
+     (mapped to `422`), never silently ignored or matched against nothing (claude.md §3.4).
+  2. Embeds the query via `app.embedding_client.embed_text(is_query=True)`.
+  3. Calls `chunk_model.hybrid_search(...)` for the fused dense+sparse candidate pool.
+  4. Re-ranks that pool via `app.reranker_client.rerank(...)`, returns the final `retrieval_top_k`.
+- **`stores/vectordb/providers/PGVectorProvider.py`** gained `search_by_bm25` (Postgres full-text
+  search using the `'simple'` config — stock Postgres has no Arabic stemming dictionary, so
+  `'simple'` tokenize-and-lowercase is the honest choice, not `'english'`) and `hybrid_search`
+  (runs both legs, fuses via standard Reciprocal Rank Fusion: `score = Σ 1/(rrf_k + rank)` over
+  whichever leg(s) a chunk appears in). If the dense leg is empty (no embeddings yet for this
+  client), fusion gracefully degrades to sparse-only ranking — never an error.
+- **`stores/reranker/*`** — `RerankerInterface`/`RerankerEnums`/`RerankerProviderFactory`/
+  `providers/CrossEncoderProvider.py`, the same Ports & Adapters pattern as `stores/llm`/
+  `stores/vectordb`. Uses `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` — small (~470MB), ungated,
+  multilingual (mMARCO covers Arabic) — deliberately not a larger reranker, since re-ranking runs
+  synchronously on every retrieval request's latency path, and this dev machine's real hardware
+  constraints make request-time latency a hard concern here, not a nice-to-have.
+- **`client_config`** gained `retrieval_top_k` (default `5`) and `rrf_k` (default `60`) — claude.md
+  §1.3 names top-K and RRF's k explicitly as values that must never be hardcoded Python constants.
+  The candidate pool size fed into fusion (`candidate_k`) is a derived multiple of `top_k` computed
+  in code, not a separate config value — it's an internal quality/performance tradeoff, not a
+  per-tenant business decision the way top-K and RRF's k are.
+- **`main.py`** — the API composition root now also builds `vectordb_client`, `chunk_model`,
+  `embedding_client`, `reranker_client`, and `retrieval_controller` at startup, and includes
+  `retrieval.retrieval_router`. `embedding_client`/`reranker_client` are loaded once at process
+  startup and held for the process lifetime (proposal §Step 4: "load the production model once at
+  startup... a single sentence embeds in ~15ms" — `SentenceTransformer`/`CrossEncoder` instances
+  are thread-safe for inference, shared across every request).
+
+No database migration needed beyond the `retrieval_top_k`/`rrf_k` columns above — `knowledge_chunks`
+already had everything else from Step 1.
+
+### Before you start the API: a sequencing note
+
+`main.py`'s startup now loads BGE-M3 (for query embedding) and the cross-encoder (for re-ranking)
+into memory. **Don't start `uvicorn` while a Step 8 shootout run or the embedding backfill is still
+active** — this machine has already hit real memory limits twice; loading a second BGE-M3 instance
+on top of one still resident risks another crash. Check first:
+```bash
+ps aux | grep step8_seed | grep -v grep    # or whatever process is currently embedding
+```
+
+### Verifying — real BM25, real RRF, real re-ranking, real isolation (dense leg honest about its current state)
+
+I proved the SQL-level logic directly against the live database before writing this section:
+`search_by_bm25` found real matches for a real Arabic query against real `raylab` content;
+`search_by_vector` correctly returned zero rows (no embeddings exist for most of the corpus until
+the backfill above finishes) without erroring; `hybrid_search` gracefully degraded to BM25-only
+ranking and produced the identical result set; and a controlled isolation probe (a second,
+clearly-fake `client_id`) returned nothing. Once the backfill/automatic embedding above has run for
+a given file, its dense leg contributes real results too — nothing else changes.
+
+**CLI (once the API is running):**
+```bash
+conda activate raylab
+cd /mnt/d/Raylab_Project/src
+uvicorn main:app --reload --port 8000
+curl http://localhost:8000/api/
+```
+
+**Postman:**
+
+| # | Request | Expected |
+|---|---|---|
+| 1 | `POST /api/retrieve`, header `X-Admin-Api-Key: <raylab's real key>`, body `{"query": "نقابة المهندسين"}` | `200`, real content back |
+| 2 | Same, body adds `"metadata_filters": {"sheet_name": "Insurance Guide"}` | `200`, results narrowed to that real sheet |
+| 3 | Same, body adds `"metadata_filters": {"not_a_real_key": "x"}` | `422` |
+| 4 | Same as #1 with header `X-Admin-Api-Key: not-a-real-key` | `401` |
+
+Confirm isolation for request #1's returned `id`s:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT id, client_id FROM knowledge_chunks WHERE id IN (<ids from the response>);"
+```
+Expect every row to show `client_id = 'raylab'`.
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -1174,11 +1369,12 @@ no other file changes, since both candidates already sit behind the same `LLMInt
 | `EMBEDDING_BACKEND` | `src/.env` | Which embedding backend is production (default `BGE_M3` — the one that actually works) |
 | `HF_TOKEN` | `src/.env` | Optional HuggingFace token for gated repos (Swan-Large only; BGE-M3 ignores this) |
 | `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
+| `RERANKER_BACKEND` / `RERANKER_BACKEND_LITERAL` | `src/.env` | Re-ranker provider selection (currently only `CROSS_ENCODER`) |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
 
 ## Project layout
 
-See `claude.md` §1.1 for the full target directory tree. Only the Steps 1–8 subset exists today:
+See `claude.md` §1.1 for the full target directory tree. All nine steps exist today:
 
 ```
 Raylab_Project/
@@ -1196,25 +1392,33 @@ Raylab_Project/
 │   ├── routes/
 │   │   ├── base.py
 │   │   ├── sync.py
-│   │   └── schemes/sync.py
+│   │   ├── retrieval.py
+│   │   └── schemes/{sync,retrieval}.py
 │   ├── controllers/
 │   │   ├── BaseController.py
 │   │   ├── SyncController.py
 │   │   ├── DocumentParsingController.py
 │   │   ├── ChunkingController.py
-│   │   └── EmbeddingShootoutController.py
+│   │   ├── EmbeddingShootoutController.py
+│   │   ├── EmbeddingGenerationController.py
+│   │   └── RetrievalController.py
 │   ├── tasks/
 │   │   ├── onedrive_sync.py
 │   │   ├── document_parsing.py
 │   │   ├── chunk_generation.py
-│   │   └── embedding_shootout.py
+│   │   ├── embedding_shootout.py
+│   │   └── embedding_generation.py
 │   ├── stores/
 │   │   ├── onedrive/
 │   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
 │   │   │   └── providers/MSALGraphProvider.py
 │   │   ├── vectordb/
 │   │   │   ├── VectorDBInterface.py, VectorDBEnums.py, VectorDBProviderFactory.py
-│   │   │   └── providers/PGVectorProvider.py
+│   │   │   └── providers/PGVectorProvider.py   # insert_many, search_by_vector, search_by_bm25,
+│   │   │                                       #   hybrid_search (RRF), update_embeddings
+│   │   ├── reranker/
+│   │   │   ├── RerankerInterface.py, RerankerEnums.py, RerankerProviderFactory.py
+│   │   │   └── providers/CrossEncoderProvider.py
 │   │   └── llm/
 │   │       ├── LLMInterface.py, LLMEnums.py, LLMProviderFactory.py
 │   │       ├── providers/BGEM3Provider.py (real, working), providers/SwanLargeProvider.py (deferred)
@@ -1226,7 +1430,7 @@ Raylab_Project/
 │   │   └── template_file_writer.py    # the only code allowed to write templates/clients/*
 │   └── models/
 │       ├── BaseDataModel.py
-│       ├── ChunkModel.py
+│       ├── ChunkModel.py              # + hybrid_search, update_embeddings, get_chunks_without_embedding
 │       ├── ClientConfigModel.py       # + get_client_id_by_admin_api_key
 │       ├── SchemaRegistryModel.py     # get_or_register / update_bucket / set_mandatory_fields
 │       ├── TokenCacheModel.py         # Fernet-encrypted, client_id-scoped
