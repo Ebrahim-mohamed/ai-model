@@ -84,8 +84,7 @@ Confirm the startup banner lists both `tasks.onedrive_sync.fetch_and_dispatch` a
 
 ```bash
 cd /mnt/d/Raylab_Project/src
-uvicorn main:app --reload --port 8000
-```
+ؤ```
 
 ### 6. Smoke-test before touching Postman
 
@@ -1308,6 +1307,40 @@ step needed for anything synced from now on.
 
 No database migration needed beyond the `retrieval_top_k`/`rrf_k` columns above — `knowledge_chunks`
 already had everything else from Step 1.
+
+### Performance: what was actually slow, and what was fixed
+
+Investigated with hard `EXPLAIN ANALYZE` evidence against the real, live database (not theorized):
+
+1. **The BM25/sparse leg had no index at all.** `search_by_bm25` recomputed
+   `to_tsvector('simple', content)` for every row on every request — measured at **~1.4 seconds**
+   via a full sequential scan. Fixed with a GIN index on that exact expression
+   (`idx_chunks_content_fts`, migration `a81a690b9d24`) — the identical query now runs in **~9ms**,
+   a ~150x improvement.
+2. **The dense leg's query plan was corrupted by stale statistics.** After the Step 8/9 bulk
+   embedding backfill (many `UPDATE`s to a previously-all-`NULL` column), Postgres's planner
+   statistics were stale enough that it estimated a full sequential scan as *cheaper* than using
+   the existing `idx_chunks_embedding_hnsw` index — measured at **~1.36 seconds**. Running `ANALYZE
+   knowledge_chunks;` alone (no query or index change) brought that down to **~0.11–0.2s**.
+   `ChunkModel.analyze_table()` now runs automatically at the end of every
+   `EmbeddingGenerationController.embed_chunks()` call (both the auto-sync path and the backfill
+   path), so this can't silently go stale again after future bulk writes.
+3. **The dense and sparse legs ran sequentially, not concurrently**, even though they're
+   independent queries on independent DB sessions. `PGVectorProvider.hybrid_search` now runs both
+   via `asyncio.gather` — a real, if smaller, latency win now that both legs are individually fast.
+4. **Both ML models were lazy-loaded on first use, not at startup.** `main.py` constructed the
+   provider objects at boot but never actually triggered their (measured: not fast on this dev
+   machine) one-time weight loading — that cost silently landed on whichever real request happened
+   to be first. `startup_span()` now runs one real warmup call against each provider at boot, so
+   model loading happens once, at server start, not inline in a user-facing request.
+
+**Honest remaining bottleneck**: with the DB layer now fast, the dominant cost per request is CPU-only
+ML inference itself — embedding the query (BGE-M3) and re-ranking the fused candidates
+(cross-encoder) — which is fundamentally bounded by this dev machine's hardware (no GPU, the same
+constraint documented in Step 8). No code-level change eliminates that; real GPU hardware is the
+actual fix if sub-second end-to-end latency is required. I have not yet timed the live
+`/api/retrieve` endpoint's model-inference portion in isolation — that's the natural next diagnostic
+step if latency is still a concern after these fixes.
 
 ### Before you start the API: a sequencing note
 

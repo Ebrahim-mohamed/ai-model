@@ -49,4 +49,11 @@ class EmbeddingGenerationController(BaseController):
             embedded += len(batch)
             logger.info(f"client_id={client_id!r} source_file={source_file!r}: embedded {embedded}/{total} chunks so far")
 
+        # A bulk write like this leaves Postgres's planner statistics
+        # stale, which measurably degrades retrieval query plans until
+        # the next autovacuum cycle happens to run (see
+        # ChunkModel.analyze_table's docstring for the measured impact).
+        # Refresh them immediately rather than waiting on autovacuum.
+        await self.chunk_model.analyze_table()
+
         return embedded

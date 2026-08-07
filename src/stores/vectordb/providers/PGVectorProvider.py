@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy import func, select, update
 
 from ..VectorDBInterface import VectorDBInterface
@@ -103,11 +105,16 @@ class PGVectorProvider(VectorDBInterface):
         dense leg is empty (no chunks embedded yet for this client — see
         claude.md/README Step 8), fusion degrades gracefully to
         sparse-only ranking, never an error."""
-        dense_results = await self.search_by_vector(
-            client_id=client_id, query_vector=query_vector, top_k=candidate_k, metadata_filters=metadata_filters,
-        )
-        sparse_results = await self.search_by_bm25(
-            client_id=client_id, query_text=query_text, top_k=candidate_k, metadata_filters=metadata_filters,
+        # Independent queries, each on its own DB session/connection —
+        # safe and strictly faster to run concurrently rather than
+        # sequentially awaiting one after the other.
+        dense_results, sparse_results = await asyncio.gather(
+            self.search_by_vector(
+                client_id=client_id, query_vector=query_vector, top_k=candidate_k, metadata_filters=metadata_filters,
+            ),
+            self.search_by_bm25(
+                client_id=client_id, query_text=query_text, top_k=candidate_k, metadata_filters=metadata_filters,
+            ),
         )
 
         scores: dict = {}

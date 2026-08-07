@@ -34,9 +34,9 @@ async def startup_span():
 
     # Step 9 — the retrieval path is the first thing that makes the API
     # process itself a stores/ consumer (previously only Postgres +
-    # Celery). embedding_client/reranker_client are loaded once here at
-    # startup and held for the process lifetime (proposal §Step 4: "load
-    # the production model once at startup... a single sentence embeds in
+    # Celery). embedding_client/reranker_client are constructed once here
+    # and held for the process lifetime (proposal §Step 4: "load the
+    # production model once at startup... a single sentence embeds in
     # ~15ms" — the same SentenceTransformer/CrossEncoder instances are
     # thread-safe for inference, shared across every request).
     vectordb_provider_factory = VectorDBProviderFactory(config=settings, db_client=app.db_client)
@@ -45,6 +45,15 @@ async def startup_span():
 
     app.embedding_client = LLMProviderFactory(config=settings).create(provider=settings.EMBEDDING_BACKEND)
     app.reranker_client = RerankerProviderFactory(config=settings).create(provider=settings.RERANKER_BACKEND)
+
+    # Both providers lazy-load their actual model weights on first use
+    # (BGEM3Provider._get_model / CrossEncoderProvider._get_model), so
+    # constructing them above does NOT load anything yet — without this,
+    # that one-time weight-loading cost (measured: not fast on this dev
+    # machine's hardware) would land inline on whichever real request
+    # happens to be first, instead of here at boot where it belongs.
+    await app.embedding_client.embed_text(["warmup"], is_query=False)
+    await app.reranker_client.rerank("warmup", ["warmup"], top_k=1)
 
     app.retrieval_controller = RetrievalController(
         client_config_model=app.client_config_model,

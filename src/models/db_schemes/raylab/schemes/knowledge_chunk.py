@@ -38,4 +38,16 @@ class KnowledgeChunk(SQLAlchemyBase):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # The sparse/BM25 leg of Step 9's hybrid search (PGVectorProvider.
+        # search_by_bm25) was measured recomputing to_tsvector('simple', ...)
+        # for every row on every request — a real ~1.4s cost, confirmed via
+        # EXPLAIN ANALYZE, that gets worse as the corpus grows. This
+        # expression index must use the exact same function call
+        # (to_tsvector('simple', content)) as that query for the planner to
+        # actually use it.
+        Index(
+            "idx_chunks_content_fts",
+            text("to_tsvector('simple', content)"),
+            postgresql_using="gin",
+        ),
     )
