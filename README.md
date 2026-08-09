@@ -42,6 +42,202 @@ onboarded `cairoscan` for real too.
 - Docker Desktop with the WSL2 backend enabled
 - Python 3.10+ inside WSL
 - DBeaver (DB inspection) and Postman (API testing, once endpoints exist) on the Windows host
+
+## Server Setup & Deployment Guide
+
+Complete, from-scratch instructions to stand up this project on a brand-new machine with
+nothing installed — no Docker, no Conda, no cloned repo. Every command below is real and was
+run in this exact sequence during this project's own environment rebuild. Commands are
+Ubuntu/Debian-targeted (`apt`-based) and run from a bash shell — on Windows that shell is WSL2
+(per the Prerequisites above); on a bare Linux server it's the server's own shell, and every
+command is identical either way. This section supersedes **Local Setup & Development** below
+for a genuinely fresh machine — that section is kept as historical documentation of how Step 1
+was originally built, not as the current setup path.
+
+### 0. Clone the repository
+
+```bash
+git clone <this-repo-url> Raylab_Project
+cd Raylab_Project
+```
+
+### 1. Install system prerequisites
+
+**Docker Engine + Compose plugin** (official Docker apt repository — this installs the modern
+`docker compose` v2 plugin, not the deprecated standalone `docker-compose`):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# run docker without sudo (log out/in, or `newgrp docker`, for this to take effect)
+sudo usermod -aG docker $USER
+newgrp docker
+
+docker --version
+docker compose version
+```
+
+> On Windows, install **Docker Desktop** with the WSL2 backend enabled instead — it exposes the
+> same `docker`/`docker compose` CLI inside WSL2 automatically, and every command below is
+> identical either way.
+
+**Miniconda:**
+
+```bash
+cd ~
+curl -fsSL -o miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash miniconda.sh -b -p $HOME/miniconda3
+$HOME/miniconda3/bin/conda init bash
+source ~/.bashrc
+```
+
+Anaconda's default channels now require an explicit one-time Terms of Service acceptance before
+`conda create` will run non-interactively — skip this and the very first `conda create` fails
+with `CondaToSNonInteractiveError`:
+
+```bash
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+### 2. Spin up the infrastructure containers (Postgres/pgvector, Redis, RabbitMQ)
+
+```bash
+cd docker
+cp env/.env.example.postgres env/.env.postgres
+cp env/.env.example.redis env/.env.redis
+cp env/.env.example.rabbitmq env/.env.rabbitmq
+# edit the three files above if you want non-default credentials — defaults work as-is
+
+docker compose up -d pgvector redis rabbitmq
+docker compose ps        # wait until all three show "healthy" before continuing
+cd ..
+```
+
+This starts `raylab-pgvector` (host port `5433` → container `5432`, database `raylab`),
+`raylab-redis` (host port `6380` → container `6379`), and `raylab-rabbitmq` (host port `5673` →
+container `5672`, management UI on `15673`). `docker-compose.yml` also defines `fastapi` and
+`celery-worker` services for a fully containerized deployment, but this project's established
+day-to-day workflow — and the rest of this guide — runs the API and worker natively inside the
+Conda environment instead, which is faster to iterate on and is what every verification in this
+README was actually run against.
+
+### 3. Create the Conda environment (Python 3.11)
+
+```bash
+conda create -n raylab python=3.11 -y
+conda activate raylab
+```
+
+Python 3.11 is required — `pgvector` and other pinned dependencies need Python ≥3.9, and 3.11 is
+the version this project has been built and verified against.
+
+### 4. Install Python dependencies (CPU-only `torch` first)
+
+```bash
+cd src
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+pip install -r requirements.txt   # torch is already satisfied; installs everything else
+```
+
+`torch` **must** be installed from PyTorch's CPU-only wheel index *before* the rest of
+`requirements.txt`, not after and not by letting `pip` resolve it as a transitive dependency —
+a plain `pip install torch` (or letting `sentence-transformers` pull it in on its own) resolves
+the full CUDA build by default, which is multiple gigabytes of `nvidia-*` wheels this project has
+no use for on CPU-only hardware and which has previously exhausted constrained disk/temp space
+during install. `torch==2.13.0` is a hard floor, not a preference — `transformers` (pulled in by
+`sentence-transformers`) refuses to run `torch.load` below `torch>=2.6` (a CVE-related
+restriction). If you do have real GPU hardware you intend to use, install a matching CUDA build
+of `torch` yourself instead of the command above, before running `pip install -r requirements.txt`.
+
+### 5. App and infrastructure environment files
+
+```bash
+cp .env.example .env
+# defaults already match docker/env/.env.example.postgres — edit only if you changed those,
+# and set MSAL_CLIENT_ID / TOKEN_CACHE_ENCRYPTION_KEY before Step 3 (OneDrive) will work
+```
+
+### 6. Run the Alembic database migrations
+
+```bash
+cd models/db_schemes/raylab
+cp alembic.ini.example alembic.ini
+# edit alembic.ini's sqlalchemy.url only if you changed the Postgres port/password/db name
+
+alembic upgrade head
+alembic current            # should print the current head revision id, marked (head)
+```
+
+This applies the full migration chain against the fresh, empty database in one pass — every
+table (`knowledge_chunks`, `client_config`, `schema_registry`, `token_cache`, `staging_rows`,
+`evaluation_queries`, `shootout_results`) and every column added across all nine build steps,
+ending at the migration that dropped the `bucket` column from `schema_registry`/`staging_rows`
+(see `claude.md` §3.5). Alembic also creates the Postgres `vector` extension itself on first run
+— no manual `psql` step is needed for that.
+
+Verify the schema landed correctly:
+
+```bash
+cd /path/to/Raylab_Project
+docker exec -it raylab-pgvector psql -U postgres -d raylab -c '\dt'
+```
+
+Expect exactly 8 tables listed (plus Alembic's own `alembic_version` bookkeeping table).
+
+### 7. Start the FastAPI server
+
+```bash
+cd src   # if not already there
+uvicorn main:app --reload --port 8000
+```
+
+Smoke-test in a separate terminal:
+
+```bash
+curl http://localhost:8000/api/
+```
+
+Expect `{"app_name":"Raylab","app_version":"0.1"}`. If this hangs or errors, re-check step 2's
+container health before going further — this endpoint requires Postgres to be reachable.
+
+### 8. Start the Celery worker (with every required queue)
+
+In another terminal, same Conda environment:
+
+```bash
+conda activate raylab
+cd src
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
+```
+
+Confirm the startup banner lists all five task modules —
+`tasks.onedrive_sync.fetch_and_dispatch`, `tasks.document_parsing.parse_and_stage`,
+`tasks.chunk_generation.generate_chunks`, `tasks.embedding_shootout.run_shootout`, and
+`tasks.embedding_generation.generate_embeddings` — under `[tasks]`, and ends with
+`celery@<host> ready.`. There is deliberately no `celery -A celery_app beat` command anywhere in
+this project — OneDrive sync is human-initiated only via `POST /api/sync`, never on a schedule
+(`claude.md` §2.3).
+
+### Deployment complete — next step
+
+The database is now fully migrated but empty (no `client_config` row, no OneDrive token cache).
+To actually populate it with real data, seed a `client_config` row for your client and complete
+the one-time MSAL device-code login described in **Step 3: OneDrive/MSAL Store** below, then
+trigger a sync — see **Daily Startup**'s step 7 for the exact `POST /api/sync` request.
+
 ## Daily Startup (Resuming Work)
 
 Once everything from Steps 1–5 is already built and migrated, this is everything needed to bring
@@ -74,17 +270,20 @@ conda activate raylab
 
 ```bash
 cd /mnt/d/Raylab_Project/src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing --loglevel=info
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
 ```
 
-Confirm the startup banner lists both `tasks.onedrive_sync.fetch_and_dispatch` and
-`tasks.document_parsing.parse_and_stage` under `[tasks]`, and ends with `celery@<host> ready.`
+Confirm the startup banner lists `tasks.onedrive_sync.fetch_and_dispatch`,
+`tasks.document_parsing.parse_and_stage`, `tasks.chunk_generation.generate_chunks`,
+`tasks.embedding_shootout.run_shootout`, and `tasks.embedding_generation.generate_embeddings` under
+`[tasks]`, and ends with `celery@<host> ready.`
 
 ### 5. Start the FastAPI server (a second terminal — leave it running too)
 
 ```bash
 cd /mnt/d/Raylab_Project/src
-ؤ```
+uvicorn main:app --reload --port 8000
+```
 
 ### 6. Smoke-test before touching Postman
 
