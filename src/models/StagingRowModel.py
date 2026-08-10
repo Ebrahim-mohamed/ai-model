@@ -3,12 +3,11 @@ from sqlalchemy import delete, func
 
 from .BaseDataModel import BaseDataModel
 from .db_schemes.raylab.schemes import StagingRow
-from .enums.BucketEnum import BucketEnum
 
 
 class StagingRowModel(BaseDataModel):
-    """Repository for staging_rows — Bucket A only (claude.md §3.5). Every
-    method requires client_id, no exceptions."""
+    """Repository for staging_rows. Every method requires client_id, no
+    exceptions."""
 
     def __init__(self, db_client: object):
         super().__init__(db_client=db_client)
@@ -18,14 +17,11 @@ class StagingRowModel(BaseDataModel):
         return cls(db_client)
 
     async def insert_many_rows(self, client_id: str, rows: list[dict], source_file: str = None, batch_size: int = 200) -> int:
-        """Each item in `rows` is {"sheet_name": ..., "row_data": ...}.
-        `bucket` is always BucketEnum.VECTOR_DB — a structural invariant of
-        this table, not a per-row choice (claude.md §3.5)."""
+        """Each item in `rows` is {"sheet_name": ..., "row_data": ...}."""
         staging_rows = [
             StagingRow(
                 client_id=client_id,
                 sheet_name=row["sheet_name"],
-                bucket=BucketEnum.VECTOR_DB.value,
                 row_data=row["row_data"],
                 source_file=source_file,
             )

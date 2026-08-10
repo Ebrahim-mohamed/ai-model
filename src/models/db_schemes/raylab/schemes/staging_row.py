@@ -5,9 +5,12 @@ from .raylab_base import SQLAlchemyBase
 
 
 class StagingRow(SQLAlchemyBase):
-    """Parsed-but-unchunked rows — Bucket A only (claude.md §3.5). Bucket B
-    and Bucket C never land here; they're rendered straight to generated
-    template files by utils/template_file_writer.py instead."""
+    """Parsed-but-unchunked rows. Every row synced from OneDrive lands
+    here now — the data entry team never uploads Bucket B/C content
+    (architecture override, see claude.md); those are static, hardcoded
+    templates entirely decoupled from this pipeline, see
+    stores/llm/templates/static/. No `bucket` column: there's nothing
+    left to distinguish."""
 
     __tablename__ = "staging_rows"
 
@@ -15,7 +18,6 @@ class StagingRow(SQLAlchemyBase):
 
     client_id = Column(String, nullable=False)
     sheet_name = Column(String, nullable=False)
-    bucket = Column(String, nullable=False)  # always BucketEnum.VECTOR_DB.value here
 
     # The row's own fields, keyed by column name, PLUS a "sheet_name" key
     # injected by the same generic parse loop that populates everything

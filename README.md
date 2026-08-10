@@ -231,12 +231,28 @@ Confirm the startup banner lists all five task modules —
 this project — OneDrive sync is human-initiated only via `POST /api/sync`, never on a schedule
 (`claude.md` §2.3).
 
-### Deployment complete — next step
+### 9. Client Onboarding
 
-The database is now fully migrated but empty (no `client_config` row, no OneDrive token cache).
-To actually populate it with real data, seed a `client_config` row for your client and complete
-the one-time MSAL device-code login described in **Step 3: OneDrive/MSAL Store** below, then
-trigger a sync — see **Daily Startup**'s step 7 for the exact `POST /api/sync` request.
+**Required before running or testing the Sync API.** The database is fully migrated at this
+point but still has no `client_config` row and no OneDrive token cache — `POST /api/sync` will
+fail for any client until this step has been run for them at least once. Run
+`scripts/onboard_client.py`: it performs the one-time MSAL Device Code Flow login and seeds
+`client_config` (drive ID, folder Item ID, admin API key) together, in a single command, from
+argv rather than a hand-typed SQL string:
+
+```bash
+cd scripts
+python onboard_client.py \
+  --client raylab \
+  --drive-id FC04A7AF2B9235EE \
+  --item-id 'FC04A7AF2B9235EE!s5a9a50eefc4d481fbf61ea87425b6c0e' \
+  --api-key raylab-admin-test-key
+```
+
+Follow the printed device-login instructions to complete the sign-in. Only once this finishes
+successfully is the client ready for `POST /api/sync` — see **Daily Startup**'s step 7 for the
+exact request. (The manual `psql`/heredoc equivalent this script replaces is still documented
+under **Step 3** and **Step 4** below, for reference.)
 
 ## Daily Startup (Resuming Work)
 
@@ -680,6 +696,8 @@ docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
   "UPDATE client_config SET admin_api_key = 'test-cairoscan-admin-key', onedrive_item_id = 'placeholder-item-id' WHERE client_id = 'cairoscan';"
 ```
 (If the `cairoscan` row doesn't exist yet, `INSERT INTO client_config (client_id, admin_api_key, onedrive_item_id) VALUES ('cairoscan', 'test-cairoscan-admin-key', 'placeholder-item-id');` instead.)
+
+> **Superseded for real onboarding:** hand-typing a `psql -c "..."` UPDATE like the one above is what corrupted a real `onedrive_item_id` in this exact project — bash's history expansion mangled a `!` inside the double-quoted string into a literal `\!`, and every Graph API call 400'd until it was caught and fixed by hand. `scripts/onboard_client.py` (see below) replaces this step and the Device Code Flow heredoc together, in one command, with no shell-interpolated SQL involved. Keep the manual `psql`/heredoc steps in this doc for troubleshooting and for understanding what the script actually does under the hood, not as the way to onboard a real client going forward.
 
 ### Run the API and worker
 
