@@ -220,16 +220,16 @@ In another terminal, same Conda environment:
 ```bash
 conda activate raylab
 cd src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
 ```
 
-Confirm the startup banner lists all five task modules —
+Confirm the startup banner lists all six task modules —
 `tasks.onedrive_sync.fetch_and_dispatch`, `tasks.document_parsing.parse_and_stage`,
-`tasks.chunk_generation.generate_chunks`, `tasks.embedding_shootout.run_shootout`, and
-`tasks.embedding_generation.generate_embeddings` — under `[tasks]`, and ends with
-`celery@<host> ready.`. There is deliberately no `celery -A celery_app beat` command anywhere in
-this project — OneDrive sync is human-initiated only via `POST /api/sync`, never on a schedule
-(`claude.md` §2.3).
+`tasks.chunk_generation.generate_chunks`, `tasks.embedding_shootout.run_shootout`,
+`tasks.embedding_generation.generate_embeddings`, and `tasks.log_intent.log_intent_turn` — under
+`[tasks]`, and ends with `celery@<host> ready.`. There is deliberately no `celery -A celery_app
+beat` command anywhere in this project — OneDrive sync is human-initiated only via
+`POST /api/sync`, never on a schedule (`claude.md` §2.3).
 
 ### 9. Client Onboarding
 
@@ -286,13 +286,13 @@ conda activate raylab
 
 ```bash
 cd /mnt/d/Raylab_Project/src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
 ```
 
 Confirm the startup banner lists `tasks.onedrive_sync.fetch_and_dispatch`,
 `tasks.document_parsing.parse_and_stage`, `tasks.chunk_generation.generate_chunks`,
-`tasks.embedding_shootout.run_shootout`, and `tasks.embedding_generation.generate_embeddings` under
-`[tasks]`, and ends with `celery@<host> ready.`
+`tasks.embedding_shootout.run_shootout`, `tasks.embedding_generation.generate_embeddings`, and
+`tasks.log_intent.log_intent_turn` under `[tasks]`, and ends with `celery@<host> ready.`
 
 ### 5. Start the FastAPI server (a second terminal — leave it running too)
 
@@ -1439,7 +1439,7 @@ alembic current   # 32f61443e199 (head)
 
 # 2. Restart the Celery worker so it picks up the new task + queue
 cd /mnt/d/Raylab_Project/src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation --loglevel=info
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
 ```
 
 In a separate terminal, enqueue the backfill (no `source_file` = every un-embedded chunk for this client):
@@ -1603,6 +1603,159 @@ docker exec raylab-pgvector psql -U postgres -d raylab -c \
 ```
 Expect every row to show `client_id = 'raylab'`.
 
+---
+
+## Section 3 — Step 1: Text Processing Pipeline (RAG + LLM)
+
+Section 2 (Steps 1–9 above) is complete. This is the first step of Section 3 — the WhatsApp Chat
+Workflow — per `D:\project\Implementation Plan — Section 3 The WhatsApp Chat Workflow.md` and
+`claude.md` §6. See that file for the full architectural rationale; this section is the
+operational how-to-run-and-verify-it record, matching every Step 1–9 section above.
+
+### Architectural additions
+
+- **`stores/generation/*`** (`GenerationInterface`/`GenerationEnums`/`GenerationProviderFactory`/
+  `providers/QwenProvider.py`) — a new Ports & Adapters store for the conversational LLM,
+  independent of the existing embedding-only `stores/llm`. `QwenProvider` is a thin
+  OpenAI-compatible HTTP client (`requests`, offloaded via `asyncio.to_thread` — the same pattern
+  `MSALGraphProvider` already uses) with two methods: `generate_reply()` and `classify_intent()`
+  (zero-shot closed-set classification, reused for both intent routing and Mode A's
+  narrow/broad-query breadth detection).
+- **`stores/llm/templates/template_parser.py`** — the `(bucket, template_id) -> rendered string`
+  resolver `claude.md` §1.1 already documented but that hadn't been built yet. Reads from the
+  existing static `prompt_templates.py` (Bucket B) / `system_directives.py` (Bucket C) modules.
+- **`stores/llm/templates/static/system_directives.py`** — one new Bucket C entry,
+  `whatsapp_mode_a_reply_directive` (the fixed Egyptian-Arabic / ground-only / mandatory-follow-up
+  policy Mode A's system prompt is built from). The pre-existing real `directive_brand_cross_referral`
+  entry is reused as-is for the cross-brand-suggestion case — nothing new was invented for that.
+- **`controllers/TextReplyController.py`** — Mode A (query-breadth-aware retrieval via
+  `RetrievalController.retrieve(..., top_k_override=...)`, Egyptian-Arabic grounded rewrite,
+  cross-brand suggestion, mandatory follow-up question) / Mode B (verbatim `TemplateParser`
+  substitution, zero LLM calls) dual reply logic.
+- **`controllers/IntentRoutingController.py`** — the one shared classification-and-routing gate:
+  classifies once, dispatches via `utils/intent_routing_map.py`'s data-driven lookup (never a
+  per-intent `if`), writes both tiers of chat history, and fires the analytics log as a
+  **fire-and-forget** Celery task (`tasks.log_intent.log_intent_turn.delay(...)`, never awaited).
+- **`utils/session_store.py`** (`SessionStore`) — Tier 1 (Redis, rolling expiry) of the two-tier
+  chat-history architecture, including hydration from Tier 2 (Postgres `chat_history`) on a cache
+  miss.
+- **`utils/intent_routing_map.py`** — the closed `Intent` taxonomy and the data-driven
+  intent → phase routing map. `complaint`/`book_appointment`/`cancel_appointment` currently route
+  to an honest "not implemented yet" reply (Steps 2/5 aren't built) rather than being silently
+  mishandled by the text pipeline.
+- **`routes/whatsapp.py`** (`POST /api/whatsapp/chat`) + `routes/schemes/whatsapp.py` — the
+  PoC-simulator text endpoint. Same admin-API-key → `client_id` resolution as `routes/retrieval.py`.
+- **`RetrievalController.retrieve()`** gained an optional `top_k_override` parameter (additive,
+  defaults to `None`) — Section 2's existing `/api/retrieve` endpoint is completely unaffected
+  since it never passes it; only Mode A's query-breadth logic uses it.
+- **`client_config`** gained `whatsapp_retrieval_top_k_narrow` (default `1`) and
+  `whatsapp_retrieval_top_k_broad` (default `5`) — never a literal inside `TextReplyController`.
+- New tables: `chat_history` (Tier 2, UUID-anchored, append-only), `intent_log` (Phase 6's
+  analytics log, append-only), `dialogue_state_template_map` (data-driven Mode B trigger →
+  template_id mapping; seeded with two real rows, `greeting → call_greeting` and
+  `closing → call_closing`, both real Bucket B templates).
+
+### Database migration
+
+```bash
+cd src/models/db_schemes/raylab
+alembic upgrade head   # applies deb4535fe6cf — chat_history, intent_log, dialogue_state_template_map, client_config columns
+alembic current         # should show deb4535fe6cf (head)
+```
+
+### New dependencies
+
+None — `requests` and `redis` were already in `requirements.txt` (used by `MSALGraphProvider` and
+Celery's own result backend, respectively). `QwenProvider` and `SessionStore` reuse both rather
+than adding new packages.
+
+### A real, honest infrastructure gap: the generation endpoint isn't deployed yet
+
+`GENERATION_BASE_URL` in `src/.env` is currently a **placeholder** (`http://localhost:8001`) — no
+real Qwen2.5-7B-Instruct server is running anywhere yet. This dev machine's GPU (Quadro M2200,
+4GB VRAM — already noted as insufficient for Step 8's Swan-Large candidate) cannot serve a 7B
+model either. Until a real OpenAI-compatible endpoint is stood up somewhere reachable (a rented
+GPU box running `vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001`, per the Implementation Plan's
+Deployment & Infrastructure section) and `GENERATION_BASE_URL` is updated to point at it:
+
+- **`IntentRoutingController.route_turn` classifies intent before anything else happens** — before
+  the Mode A/B check, before persistence. This means, honestly, **no path through the real
+  `POST /api/whatsapp/chat` endpoint works end-to-end without a reachable `GENERATION_BASE_URL`**,
+  not even Mode B, even though Mode B's own reply generation never calls the LLM once routing has
+  already happened.
+- Verified directly against the real running server (not assumed): with the placeholder URL, a
+  real Postman/`curl` call fails with `requests.exceptions.ConnectionError` inside
+  `QwenProvider._post_chat_completion`, called from `IntentRoutingController.route_turn`'s
+  classification step — confirmed from the live server's own traceback, not inferred.
+- This is a deployment/infrastructure gap, not a code gap — every layer beneath the classification
+  call (routing dispatch, `TemplateParser`, both persistence tiers, the fire-and-forget log) is
+  real and wired correctly; there is simply nothing real for `classify_intent` to talk to yet.
+
+A separate, honest note on intent classification: the Implementation Plan's original design named
+a fine-tuned CAMeL-BERT-DA checkpoint for this. That model doesn't exist yet — training one needs
+labeled data this project doesn't have yet either. `classify_intent()` uses the same Qwen
+generation endpoint with a constrained-output prompt instead, which is a real, working technique
+today and shares the same `GenerationInterface` port, but it is **not** the CAMeL-BERT model the
+plan describes. Swapping in a real fine-tuned classifier later is a new `stores/` adapter behind
+the same interface, not a rewrite of `IntentRoutingController`.
+
+### Verifying — confirming the gap, and everything up to it, against the real server
+
+Start the stack:
+```bash
+cd /mnt/d/Raylab_Project/src
+conda activate raylab
+uvicorn main:app --reload --port 8000
+```
+```bash
+# separate terminal, same conda env
+celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
+```
+
+**In Postman**, `POST http://localhost:8000/api/whatsapp/chat`, header `X-Admin-Api-Key:
+raylab-admin-test-key`, body:
+```json
+{"session_id": "11111111-1111-1111-1111-111111111111", "message": "أهلا"}
+```
+This will attempt intent classification (needs the generation endpoint) — with no real endpoint
+configured yet, expect a `500` with a connection error surfaced from `QwenProvider`. This is
+expected given the gap above, and is itself a useful negative check: confirm the error originates
+from the generation call, not from routing/persistence.
+
+**Once a real `GENERATION_BASE_URL` is configured**, seed a session with `dialogue_state:
+"greeting"` first to exercise Mode B specifically (otherwise every message defaults into Mode A):
+```bash
+docker exec raylab-redis redis-cli -a raylab_redis_2222 --no-auth-warning \
+  SET "session:raylab:11111111-1111-1111-1111-111111111111" \
+  '{"dialogue_state":"greeting","brand_filter":null,"slots":{},"history":[]}' EX 86400
+```
+Re-run the same Postman request and confirm: `mode` in the response is `"mode_b"`, `reply` matches
+`call_greeting`'s real text byte-for-byte, and:
+```bash
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT direction, content FROM chat_history WHERE client_id='raylab' ORDER BY created_at;"
+docker exec raylab-pgvector psql -U postgres -d raylab -c \
+  "SELECT intent, routing_outcome FROM intent_log WHERE client_id='raylab' ORDER BY created_at DESC LIMIT 1;"
+```
+confirm both directions of the message are recorded and the intent log shows one new row.
+
+### Verifying — Mode A (requires a real, reachable `GENERATION_BASE_URL`)
+
+Once a real Qwen2.5-7B-Instruct endpoint is configured, in Postman: (a) a narrow factual question
+about a real, currently-synced sheet's content, confirming a grounded reply and a follow-up
+question at the end; (b) a broad query ("عندكم إيه من الأشعة؟"), confirming a concise, multi-item
+summary (`whatsapp_retrieval_top_k_broad` chunks) rather than a single narrow fact; (c) the same
+broad query with a Redis-seeded `brand_filter` set to a brand that doesn't offer the service,
+confirming the cross-brand note fires; (d) a query with no real matching content at all,
+confirming an honest "not available" reply rather than a fabricated one — never against invented
+chunks, always against this client's real, currently-synced `knowledge_chunks`.
+
+**Success criteria before moving to Step 2**: the connection-error negative check above passes
+against the real running server (confirming everything up to the generation call is wired
+correctly); once a real `GENERATION_BASE_URL` is configured, the Mode B check and all four Mode A
+Postman cases pass; every turn tested produces exactly one `intent_log` row and both directions
+recorded in `chat_history`.
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -1621,6 +1774,10 @@ Expect every row to show `client_id = 'raylab'`.
 | `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
 | `RERANKER_BACKEND` / `RERANKER_BACKEND_LITERAL` | `src/.env` | Re-ranker provider selection (currently only `CROSS_ENCODER`) |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
+| `GENERATION_BACKEND` / `GENERATION_BACKEND_LITERAL` | `src/.env` | Conversational-LLM provider selection (currently only `QWEN2_5_7B_INSTRUCT`) — Section 3 Step 1 |
+| `GENERATION_BASE_URL` | `src/.env` | Wherever the OpenAI-compatible Qwen2.5-7B-Instruct endpoint is actually served — **placeholder by default**, see Section 3 Step 1's Deployment note |
+| `GENERATION_MODEL_NAME` / `GENERATION_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Model name sent in the chat-completions request; HTTP timeout |
+| `SESSION_REDIS_URL` / `SESSION_TTL_SECONDS` / `SESSION_HISTORY_WINDOW` | `src/.env` | Tier 1 (Redis) of the two-tier chat-history architecture — Section 3 Step 1 |
 
 ## Project layout
 

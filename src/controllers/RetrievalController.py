@@ -29,7 +29,13 @@ class RetrievalController(BaseController):
         self.embedding_client = embedding_client
         self.reranker_client = reranker_client
 
-    async def retrieve(self, client_id: str, query: str, metadata_filters: dict | None = None) -> list[dict]:
+    async def retrieve(
+        self,
+        client_id: str,
+        query: str,
+        metadata_filters: dict | None = None,
+        top_k_override: int | None = None,
+    ) -> list[dict]:
         client_config = await self.client_config_model.get_client_config(client_id)
         if client_config is None:
             raise UnknownClientError(f"No client_config row for client_id={client_id!r}")
@@ -43,7 +49,14 @@ class RetrievalController(BaseController):
                     f"{sorted(unknown_keys)}. Allowed keys: {sorted(allowed_keys)}"
                 )
 
-        top_k = client_config.retrieval_top_k
+        # top_k_override: Section 3 Step 1's query-breadth-aware Mode A
+        # needs a per-call top_k (1 for a narrow query, several for a
+        # broad one — see TextReplyController) distinct from this
+        # client's own /api/retrieve default. Optional and defaulted to
+        # None so Section 2's existing retrieval endpoint, which never
+        # passes it, is completely unaffected (claude.md §6.1 — additive
+        # only, never an edit-in-place to Section 2 behavior).
+        top_k = top_k_override if top_k_override is not None else client_config.retrieval_top_k
         rrf_k = client_config.rrf_k
         # How many candidates each of dense/sparse contributes before RRF
         # fusion — a derived multiple of top_k (more candidates than the

@@ -10,6 +10,7 @@ from models.SchemaRegistryModel import SchemaRegistryModel
 from models.StagingRowModel import StagingRowModel
 from models.ChunkModel import ChunkModel
 from models.EvaluationQueryModel import EvaluationQueryModel
+from models.IntentLogModel import IntentLogModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
@@ -47,6 +48,7 @@ async def get_setup_utils() -> dict:
 
     chunk_model = await ChunkModel.create_instance(db_client, vectordb_client=vectordb_client)
     evaluation_query_model = await EvaluationQueryModel.create_instance(db_client)
+    intent_log_model = await IntentLogModel.create_instance(db_client)
 
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
@@ -60,6 +62,7 @@ async def get_setup_utils() -> dict:
         "staging_row_model": staging_row_model,
         "chunk_model": chunk_model,
         "evaluation_query_model": evaluation_query_model,
+        "intent_log_model": intent_log_model,
         "vectordb_client": vectordb_client,
         "onedrive_client": onedrive_client,
     }
@@ -75,6 +78,7 @@ celery_app = Celery(
         "tasks.chunk_generation",
         "tasks.embedding_shootout",
         "tasks.embedding_generation",
+        "tasks.log_intent",
     ],
 )
 
@@ -106,6 +110,7 @@ celery_app.conf.update(
         "tasks.chunk_generation.generate_chunks": {"queue": "chunk_generation"},
         "tasks.embedding_shootout.run_shootout": {"queue": "embedding_shootout"},
         "tasks.embedding_generation.generate_embeddings": {"queue": "embedding_generation"},
+        "tasks.log_intent.log_intent_turn": {"queue": "whatsapp_text"},
     },
 
     timezone="UTC",

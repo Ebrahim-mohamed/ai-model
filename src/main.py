@@ -2,15 +2,21 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from routes import base, sync, retrieval
+from routes import base, sync, retrieval, whatsapp
 from helpers.config import get_settings
 from models.ClientConfigModel import ClientConfigModel
 from models.ChunkModel import ChunkModel
+from models.ChatHistoryModel import ChatHistoryModel
+from models.DialogueStateTemplateMapModel import DialogueStateTemplateMapModel
 from controllers.SyncController import SyncController
 from controllers.RetrievalController import RetrievalController
+from controllers.TextReplyController import TextReplyController
+from controllers.IntentRoutingController import IntentRoutingController
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.reranker.RerankerProviderFactory import RerankerProviderFactory
+from stores.generation.GenerationProviderFactory import GenerationProviderFactory
+from utils.session_store import SessionStore
 
 app = FastAPI()
 
@@ -62,8 +68,39 @@ async def startup_span():
         reranker_client=app.reranker_client,
     )
 
+    # Section 3 Step 1 — the WhatsApp text pipeline. generation_client is
+    # a thin HTTP adapter (no local weights to warm up here, unlike
+    # embedding_client/reranker_client above); it is not health-checked
+    # at boot so a not-yet-reachable Qwen endpoint never blocks the rest
+    # of this already-working API process from starting — Mode A calls
+    # simply fail lazily on first use until GENERATION_BASE_URL points at
+    # a real server (see README).
+    app.generation_client = GenerationProviderFactory(config=settings).create(provider=settings.GENERATION_BACKEND)
+
+    app.chat_history_model = await ChatHistoryModel.create_instance(app.db_client)
+    app.dialogue_state_template_map_model = await DialogueStateTemplateMapModel.create_instance(app.db_client)
+    app.session_store = SessionStore(
+        redis_url=settings.SESSION_REDIS_URL,
+        ttl_seconds=settings.SESSION_TTL_SECONDS,
+        history_window=settings.SESSION_HISTORY_WINDOW,
+    )
+
+    app.text_reply_controller = TextReplyController(
+        retrieval_controller=app.retrieval_controller,
+        client_config_model=app.client_config_model,
+        generation_client=app.generation_client,
+        dialogue_state_template_map_model=app.dialogue_state_template_map_model,
+    )
+    app.intent_routing_controller = IntentRoutingController(
+        generation_client=app.generation_client,
+        text_reply_controller=app.text_reply_controller,
+        chat_history_model=app.chat_history_model,
+        session_store=app.session_store,
+    )
+
 
 async def shutdown_span():
+    await app.session_store.close()
     app.db_engine.dispose()
 
 
@@ -73,3 +110,4 @@ app.on_event("shutdown")(shutdown_span)
 app.include_router(base.base_router)
 app.include_router(sync.sync_router)
 app.include_router(retrieval.retrieval_router)
+app.include_router(whatsapp.whatsapp_router)

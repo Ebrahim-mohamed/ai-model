@@ -6,7 +6,9 @@ from string import Template
 # confirmed by the user). Source: real, literal Arabic text extracted
 # directly from D:\project\project\data\{سياق المكالمة.pdf,
 # ارسال الايميلات التواصل.pdf, العيادات التخصييه.pdf, التوجيهات.pdf,
-# واتساب سكربت.png} and the real "Complaint Handling" sheet inside
+# Scripts.xlsx (sheet "Instruction" — WhatsApp open/close scripts,
+# authoritative over the واتساب سكربت.png screenshot of the same table)}
+# and the real "Complaint Handling" sheet inside
 # D:\project\project\data\Raylab-Knowledgebase-V1.xlsx — cross-referenced
 # against the bucket/template_id design in D:\project\structure.pdf.pdf.
 # No fabricated content — every literal sentence below is a direct
@@ -75,23 +77,34 @@ refuse_report_alt_number = Template(
     "الدفع أو بطاقة المريض."
 )
 
-#### WhatsApp Script — واتساب سكربت.png ####
-# Real content transcribed from the source screenshot. The feedback-survey
-# URLs are long, low-resolution strings in the source image — re-verify
-# both character-for-character against the original PNG at full zoom
-# before this goes into a production system prompt; everything else here
-# was clearly legible.
+#### WhatsApp Script — closing message (الرسالة الختامية لغلق الشات) ####
+# Real, verbatim source: D:\project\project\data\Scripts.xlsx, sheet
+# "Instruction", row D5 (Cairoscan) / D9 (Technoscan) — real spreadsheet
+# text, not OCR off واتساب سكربت.png (that screenshot is the same content
+# rendered as a table image; the .xlsx is the authoritative, unambiguous
+# source for the exact characters, so it wins over the low-resolution
+# screenshot per claude.md's "target schema is law" sourcing discipline).
+# Previous version of these two templates was a bare survey URL with a
+# transcription error in each link (a missing "e/" path segment and a
+# dropped "K" for Cairoscan; "pilx" instead of "plix" for Technoscan) —
+# both corrected here against the real cell values.
 
-whatsapp_close_chat_technoscan = Template(
+whatsapp_close_chat_technoscan = Template("\n".join([
+    "يرجي العلم انه في حاله عدم الرد سيتم اغلاق المحادثه تلقائيا وفي حاله "
+    "الارسال مره اخري سيتم بدء محادثه جديده",
+    "شكرا لأختيارك تكنوسكان",
+    "لتقييم الخدمه المقدمه من خلال الواتس اب يرجي الضغط علي اللينك ادناه",
     "We would like to know your feedback about your experience with us, "
-    "https://prod.pilx.co/0y7iLnv"
-    # ^ VERIFY against the source PNG at full resolution — low-confidence OCR.
-)
+    "https://prod.plix.co/0y7iLnv",
+]))
 
-whatsapp_close_chat_cairoscan = Template(
-    "https://docs.google.com/forms/d/1FAIpQLSf2MSTYzvk8ba2tMdL2odMdaavcxqdE5dLcjhtseQYqkTR6A/viewform"
-    # ^ VERIFY against the source PNG at full resolution — low-confidence OCR.
-)
+whatsapp_close_chat_cairoscan = Template("\n".join([
+    "يرجي العلم انه في حاله عدم الرد سيتم اغلاق المحادثه تلقائيا وفي حاله "
+    "الارسال مره اخري سيتم بدء محادثه جديده",
+    "شكرا لأختيارك كايروسكان",
+    "لتقييم الخدمه المقدمه من خلال الواتس اب يرجي الضغط علي اللينك ادناه",
+    "https://docs.google.com/forms/d/e/1FAIpQLSf2MSTYzvk8ba2tMdL2odMdaavcxqdE5dLcjhtseQYqkKTR6A/viewform",
+]))
 
 #### E-mail Templates — ارسال الايميلات التواصل.pdf ####
 # Five real, field-structured templates. "Structural accuracy matters more

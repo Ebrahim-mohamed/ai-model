@@ -77,6 +77,27 @@ class Settings(BaseSettings):
     CELERY_TASK_ACKS_LATE: bool = True
     CELERY_WORKER_CONCURRENCY: int = 2
 
+    # Section 3 Step 1 — config-driven generation-model provider selection,
+    # identical pattern to EMBEDDING_BACKEND/VECTOR_DB_BACKEND. QwenProvider
+    # is an OpenAI-compatible HTTP client; GENERATION_BASE_URL points at
+    # wherever that endpoint is actually served (a local vLLM instance, a
+    # rented GPU box) — the app code never knows or cares which, only that
+    # the URL is reachable (claude.md §6.3 Ports & Adapters).
+    GENERATION_BACKEND_LITERAL: List[str] = ["QWEN2_5_7B_INSTRUCT"]
+    GENERATION_BACKEND: str = "QWEN2_5_7B_INSTRUCT"
+    GENERATION_BASE_URL: str
+    GENERATION_MODEL_NAME: str = "qwen25"
+    GENERATION_REQUEST_TIMEOUT_SECONDS: int = 30
+
+    # Section 3 Step 1 — Tier 1 (Redis) of the two-tier chat-history
+    # architecture: active session state (dialogue stage, collected slots,
+    # rolling message window), separate from Celery's own broker/result
+    # Redis usage above — a different concern, kept on its own config
+    # field even if it happens to point at the same Redis instance.
+    SESSION_REDIS_URL: str
+    SESSION_TTL_SECONDS: int = 86400
+    SESSION_HISTORY_WINDOW: int = 20
+
     class Config:
         env_file = ".env"
 
