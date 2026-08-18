@@ -45,18 +45,71 @@ class ClientConfig(SQLAlchemyBase):
     whatsapp_retrieval_top_k_narrow = Column(Integer, nullable=False, server_default="1")
     whatsapp_retrieval_top_k_broad = Column(Integer, nullable=False, server_default="5")
 
-    # Relevance gate for narrow-breadth Mode A queries only (claude.md
-    # §1.3 — a similarity cutoff is exactly the kind of business
-    # threshold that must live here, never a Python constant). Deliberately
-    # NOT applied to broad queries: real calibration against the live
-    # reranker (cross-encoder/mmarco-mMiniLMv2-L12-H384-v1, raw logit
-    # score, unbounded) showed a genuinely in-domain broad query
-    # ("عندكم أشعة إيه؟", top score -1.24) scores in the same range as a
-    # genuinely out-of-domain one ("بتعملوا عمليات قلب مفتوح؟", -1.30) —
-    # broad questions don't match any single chunk well even when
-    # correct, so a flat cutoff there would false-decline real queries.
-    # Narrow queries showed a clean, wide gap instead: real in-domain
-    # top-1 scores of 5.13 and 0.86 vs. -1.3 to -5.8 for every
-    # out-of-domain/adjacent/nonsense query tested — 0.0 sits well clear
-    # of every real sample on both sides.
-    whatsapp_min_relevance_score = Column(Float, nullable=False, server_default="0.0")
+    # Repurposed (was: a Mode A narrow-query relevance gate on the
+    # reranker's raw logit score — that mechanism was removed; see
+    # TextReplyController's git history). Now: the minimum BGE-M3 cosine
+    # similarity a chunk's field label must reach against the patient's
+    # question for FieldSelectionController to hand that field to the LLM
+    # (claude.md §1.3 — a similarity cutoff is a business threshold,
+    # never a Python constant). Column name kept as-is deliberately — no
+    # migration needed to rename it, only to redocument it.
+    #
+    # IMPORTANT — the old default (0.0) and its justification do NOT
+    # carry over: that number was calibrated against the cross-encoder
+    # reranker's unbounded raw logit score (real samples: 5.13 down to
+    # -5.8). Cosine similarity is a different, bounded scale (-1 to 1),
+    # and same-language short phrases routinely sit at a positive
+    # baseline similarity even when unrelated — 0.0 here would likely
+    # accept nearly every field and defeat the filter. 0.35 below is a
+    # conservative placeholder, NOT a calibrated value — no real BGE-M3
+    # query-vs-label similarity samples have been collected yet (unlike
+    # the reranker gate, which had real production traffic to measure
+    # against). Recalibrate this the same way once FieldSelectionController
+    # is live: collect real query/label similarity pairs and pick a floor
+    # with an actual gap between genuine and spurious matches.
+    whatsapp_min_relevance_score = Column(Float, nullable=False, server_default="0.35")
+
+    # How many fields FieldSelectionController may hand the LLM for a
+    # narrow query. Default 2, not 1: most narrow questions resolve to a
+    # single field ("فيه أسانسير؟"), but compound ones legitimately need
+    # two ("فيه أسانسير وكرسي متحرك؟") — capped low deliberately, since
+    # the whole point is narrowing away from "all 15 fields," not
+    # re-approaching it.
+    whatsapp_field_selection_max_fields = Column(Integer, nullable=False, server_default="2")
+
+    # Deterministic breadth classification — replaces the LLM-based
+    # classify_intent(["narrow","broad"]) call, which real traffic proved
+    # unreliable: clearly-narrow questions (e.g. "عندي تأمين بس عايز
+    # ادفع كاش، هاخد لاكي برضه؟") were misrouted to the broad path, and
+    # every literal [BEGIN SOURCE] scaffolding leak found in production
+    # output traces back to exactly that misrouting (the broad path is
+    # the only one that wraps chunks that way) — meaning
+    # FieldSelectionController never even ran on those turns.
+    #
+    # Real calibration against the live reranker (cross-encoder, raw
+    # unbounded logit score) on 5 genuinely narrow + 3 genuinely broad
+    # queries: narrow top-1 scores were 5.19, -0.02, 5.99, 0.39, 7.08;
+    # broad top-1 scores were -1.24, -2.69, -0.10. A flat top-score
+    # threshold of 0.0 correctly separates 4/5 narrow and 3/3 broad in
+    # that sample — a real, evidence-based number, not the illustrative
+    # ">1.0" first floated for this design, which would have misclassified
+    # 2 of the 5 real narrow samples (the ones with weaker, more
+    # paraphrased wording) as broad.
+    #
+    # whatsapp_breadth_score_gap (the required drop-off to results[1]) is
+    # a weaker signal in the same real data — broad queries sometimes show
+    # a LARGER gap than narrow ones (e.g. "عندكم أشعة إيه؟", broad,
+    # gap=1.07 vs. "موافقة تأمين بنك مصر...", narrow, gap=0.71) — so this
+    # is kept as a lenient secondary condition (AND'd with the top-score
+    # check, per the original design), not the primary discriminator.
+    #
+    # Known, disclosed limitation: a genuinely narrow question phrased as
+    # an indirect paraphrase rather than a direct term match can still
+    # score low on the reranker (real example: "هو فرع سليمان أباظة
+    # مناسب لو معايا حد بكرسي متحرك؟" scored -0.02, just under this
+    # threshold) and get treated as broad. That's a real, different
+    # failure mode from the one this fix targets (LLM-based
+    # misclassification) — deterministic and tunable instead of
+    # unpredictable, but not perfect.
+    whatsapp_breadth_score_threshold = Column(Float, nullable=False, server_default="0.0")
+    whatsapp_breadth_score_gap = Column(Float, nullable=False, server_default="0.3")

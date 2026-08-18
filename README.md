@@ -1028,7 +1028,8 @@ Expect, for every row:
 - `content` starts with `[Document: <file name without extension>] ` followed immediately by the
   first populated field as `label: value`, then `. `-joined subsequent fields — nothing skipped
   except genuinely empty cells.
-- `metadata` contains only `sheet_name` and `source_file` — **no** `boilerplate_excluded_fields`
+- `metadata` contains `sheet_name`, `source_file`, and `field_data` (Section 3 Step 1's structured
+  field preservation, added later — see that section below) — **no** `boilerplate_excluded_fields`
   key exists anymore, on any row, for any sheet.
 - Row count for a given `source_file` matches its staged row count in `staging_rows` exactly (no
   exclusions means no row/column ever silently disappears from the embedded text).
@@ -1655,13 +1656,65 @@ operational how-to-run-and-verify-it record, matching every Step 1–9 section a
   template_id mapping; seeded with two real rows, `greeting → call_greeting` and
   `closing → call_closing`, both real Bucket B templates).
 
+### Structured field preservation & dynamic field selection
+
+Added after real Postman traffic against the live Qwen endpoint showed the model unreliably
+extracting one relevant fact out of a chunk with many unrelated fields (e.g. asked only about
+elevator access, but the chunk also carries Visa/ValU, working hours, wheelchair access, ambulance
+availability...). `ChunkingController` already builds the flattened `content` string from a real,
+already-parsed `{column: value}` dict (`row.row_data`, sourced from `schema_registry`'s discovered
+columns) — that dict was being discarded after the flatten. It's no longer discarded:
+
+- **`controllers/ChunkingController.py`** — `_extract_non_empty_fields(row_data, columns)` is now
+  the single source of truth for which fields exist on a row; `_concatenate_fields` builds
+  `content` *from* that dict rather than filtering independently. The same dict is also stored,
+  structured, as `metadata.field_data` — never embedded, never indexed, purely a generation-time
+  aid. No new column, no migration — `metadata` was already `JSONB`.
+- **`controllers/FieldSelectionController.py`** (new) — `select_relevant_fields(query, field_data,
+  min_similarity, max_fields)`. Embeds the query and `field_data`'s own keys (whatever they are,
+  for whatever sheet/client — never a hardcoded field name) via the same shared `embedding_client`
+  retrieval already uses, ranks by cosine similarity, returns only the label:value pairs above the
+  floor. Zero regex, zero keyword lists, zero second LLM call.
+- **`controllers/TextReplyController.py`** — narrow-breadth CONTEXT is now built by
+  `_narrow_context_block`, which runs each retrieved chunk's `field_data` through
+  `FieldSelectionController` and uses only the matched fields. Falls back to that chunk's full
+  `content` (today's pre-existing behavior) whenever `field_data` is missing (any chunk synced
+  before this change) or nothing clears the similarity floor. Broad-breadth CONTEXT is completely
+  unchanged — full multi-chunk content, `[BEGIN SOURCE n]` delimiters — since Rule 5's
+  summarization task needs breadth, not narrowing.
+- **`client_config`** — `whatsapp_field_selection_max_fields` (new column, default `2`) caps how
+  many fields a narrow query can pull in. `whatsapp_min_relevance_score` is **repurposed**: it
+  previously gated a Mode A relevance check on the reranker's raw logit score (that mechanism was
+  removed); it's now the minimum BGE-M3 cosine similarity a field label must reach. Its default was
+  updated from `0.0` to `0.35` as part of this migration — the old value was calibrated for a
+  completely different, unbounded score scale and would not have functioned as a meaningful cosine
+  floor. **This new default is a conservative placeholder, not yet calibrated against real
+  query/label similarity samples** the way the reranker gate was — recalibrate it once this is
+  live, the same evidence-based way (collect real similarity pairs, confirm an actual gap between
+  genuine and spurious matches, don't assume the number transfers).
+- **`main.py`** — `app.field_selection_controller = FieldSelectionController(embedding_client=app.embedding_client)`,
+  constructed right after `embedding_client`, passed into `TextReplyController`.
+
+**Rollout note:** existing `knowledge_chunks` rows have no `field_data` — the fallback above keeps
+them working exactly as before, but narrow queries only benefit from field-level filtering after a
+real `POST /api/sync` re-processes that client's data through the updated `ChunkingController`.
+This doesn't happen automatically on deploy; per claude.md §4.3 the only valid way to confirm it
+worked is a real sync against real data; a synthetic/partial one doesn't count.
+
 ### Database migration
 
 ```bash
 cd src/models/db_schemes/raylab
-alembic upgrade head   # applies deb4535fe6cf — chat_history, intent_log, dialogue_state_template_map, client_config columns
-alembic current         # should show deb4535fe6cf (head)
+alembic upgrade head
+alembic current   # should show e8b3c9a1f2d7 (head)
 ```
+
+Chain, in order: `deb4535fe6cf` (`chat_history`, `intent_log`, `dialogue_state_template_map`,
+`whatsapp_retrieval_top_k_narrow`/`_broad`) → `c3f7a1b2d4e6` (`whatsapp_min_relevance_score`,
+originally for a Mode A relevance gate since removed) → `e8b3c9a1f2d7`
+(`whatsapp_field_selection_max_fields`; repurposes `whatsapp_min_relevance_score`'s default for its
+new role as FieldSelectionController's cosine-similarity floor — see "Structured field
+preservation & dynamic field selection" above).
 
 ### New dependencies
 
@@ -1756,6 +1809,128 @@ correctly); once a real `GENERATION_BASE_URL` is configured, the Mode B check an
 Postman cases pass; every turn tested produces exactly one `intent_log` row and both directions
 recorded in `chat_history`.
 
+### Phase 0: model bake-off (Qwen2.5-7B-Instruct hit a real cognitive ceiling)
+
+Live-data grading of `scripts/golden_test_suite.json` runs against the deployed Qwen2.5-7B-Instruct
+showed persistent fact inversion, math hallucination, and scaffolding leakage even on turns that
+received clean, correctly-narrowed context (see `rag_execution.log`-backed analysis) — evidence of
+a model capability ceiling, not an architecture defect. Three candidates are being bake-off tested
+as replacements, using the exact same evaluation harness, never a synthetic or scripted substitute
+(claude.md §4.3):
+
+| Candidate | HF repo | Role |
+|---|---|---|
+| Falcon-H1-34B-Instruct | `tiiuae/Falcon-H1-34B-Instruct` | Primary — #1 on the Open Arabic LLM Leaderboard at time of research |
+| Nile-Chat-12B | `MBZUAI-Paris/Nile-Chat-12B` | Egyptian-dialect specialist |
+| Qwen2.5-32B-Instruct-AWQ | `Qwen/Qwen2.5-32B-Instruct-AWQ` | Control arm (same lineage as the current model, more capacity) |
+
+Each candidate gets its own `GenerationEnums` value and its own `stores/generation/providers/*.py`
+adapter (`FalconH1Provider.py` and `NileChatProvider.py` are implemented; a Qwen2.5-32B-AWQ branch
+follows once its real chat-template/EOS constants are confirmed from its own tokenizer config —
+never assumed by copying another model's tuned values) — identical pattern to Step 8's
+`EMBEDDING_BACKEND` shootout, so `GENERATION_BACKEND` always identifies which real model produced a
+given golden-suite output. `NileChatProvider`'s stop sequence (`<end_of_turn>`) is confirmed from
+Nile-Chat-12B's own real `generation_config.json` (`eos_token_id: [1, 106]`, where 106 is Gemma's
+documented end-of-turn token — Nile-Chat is built on Gemma 3, not Qwen/Falcon's ChatML lineage).
+
+**1. Launch the candidate under vLLM** (on whatever GPU host — Colab/rented/on-prem — is serving it):
+
+```bash
+# Falcon-H1-34B-Instruct — bf16 needs ~70GB VRAM (no confirmed pre-quantized 34B checkpoint at
+# research time); --quantization bitsandbytes fits a 40GB A100. --enforce-eager is required —
+# CUDA graph capture silently SIGKILLed the process on a real run (see Phase 0 verdict below).
+vllm serve tiiuae/Falcon-H1-34B-Instruct --quantization bitsandbytes --load-format bitsandbytes \
+  --dtype bfloat16 --max-model-len 4096 --gpu-memory-utilization 0.80 --enforce-eager \
+  --port 8001 --served-model-name falcon-h1-34b
+
+# Nile-Chat-12B — fits comfortably on a single 24GB+ GPU in bf16.
+vllm serve MBZUAI-Paris/Nile-Chat-12B --port 8001 --served-model-name nile-chat-12b
+
+# Qwen2.5-32B-Instruct-AWQ — pre-quantized, ~20GB VRAM.
+vllm serve Qwen/Qwen2.5-32B-Instruct-AWQ --port 8001 --served-model-name qwen25-32b-awq
+```
+
+**2. Point `src/.env` at it** — `GENERATION_MODEL_NAME` must exactly match `--served-model-name`
+above, or every request 404s:
+
+```
+GENERATION_BACKEND="NILE_CHAT_12B"
+GENERATION_BASE_URL="<tunnel URL for the host running vLLM>"
+GENERATION_MODEL_NAME="nile-chat-12b"
+```
+
+Restart the FastAPI app so `main.py`'s composition root re-reads `Settings` and rebuilds
+`app.generation_client` through the new branch.
+
+**3. Collect and save under a candidate-specific filename** (the default `golden_raw_outputs.json`
+is silently overwritten on the next run otherwise):
+
+```bash
+python scripts/collect_golden_responses.py --output golden_outputs_falcon34b.json
+python scripts/collect_golden_responses.py --output golden_outputs_nilechat12b.json
+python scripts/collect_golden_responses.py --output golden_outputs_qwen32b.json
+```
+
+`--retry-failed <path>` re-sends only the cases an existing output file recorded as failed
+(`[REQUEST FAILED...]` or missing), merging fresh results back in — added after Falcon-H1's run hit
+5/67 timeouts, so a partial run doesn't need a full 67-query re-collection to complete.
+
+Grade each output file against `golden_test_suite.json`'s `expected_fact`/`expected_behavior`
+independently, then compare across candidates on the same failure taxonomy already established
+(Chinese leakage, fact inversion, scaffolding leakage, math hallucination) before promoting a winner
+into `GENERATION_BACKEND`.
+
+### Phase 0 verdict: Falcon-H1-34B — rejected
+
+Full 67-case grading against a real, running deployment (`golden_outputs_falcon34b.json`, correlated
+against `rag_execution.log`'s `[breadth]`/`[context]` traces) found:
+
+- **Fatal, model-level hallucination on clean context** — a 198-character, correctly narrow-routed,
+  correctly field-selected context produced a fabricated doctor's name ("دكتورة أسماء ماهر") and an
+  invented queue number that have no plausible source in that content. Not explainable by retrieval,
+  chunking, or prompt construction.
+- **Fact inversion concentrated in the broad (5-chunk) retrieval path** — ambulance availability,
+  anesthesia availability (×2), an MRI branch question — consistent with a real, pre-existing,
+  documented risk (`TextReplyController`'s own comments already describe cross-chunk entity
+  conflation as the reason the `[BEGIN SOURCE n]` delimiters exist), but the delimiters did not fully
+  prevent it for this model.
+- **Language leakage** (Chinese, French-fragment, a full English paragraph, "unfortunately",
+  "Organize") in 6/62 successful replies — consistent with published research (Qwen-Scope/SASFT,
+  cited in the Phase 0 research thread) showing this is a systemic, trained-in property of how these
+  models represent language internally, not a `FalconH1Provider` misconfiguration (stop tokens,
+  temperature, repetition_penalty were all verified correct/neutral).
+- **5/67 timeouts/500s** — root-caused to real inference latency under `--enforce-eager` (required to
+  avoid a separate CUDA-graph-capture crash) over a Colab-tunneled connection, not context size (a
+  55-character narrow query timed out identically to a 6,916-character broad one) or a code defect.
+  This category was infra-fixable (see below) and does not count as evidence against the model.
+
+**Verdict: rejected for production** on the hallucination/leakage evidence, which is model-level, not
+a codebase defect — while the timeout infra was hardened anyway since Nile-Chat-12B and Qwen2.5-32B
+inherit the same deployment shape.
+
+### Infra hardening applied after the Falcon-H1 run
+
+- **`GENERATION_REQUEST_TIMEOUT_SECONDS`**: 30 → 120 (`src/.env`, `.env.example`, `helpers/config.py`
+  default) — real traffic against a `--enforce-eager` 34B deployment showed 5/67 turns exceeding 30s
+  on latency alone. `scripts/collect_golden_responses.py --timeout` default raised 60 → 260 to match
+  (a turn can make up to 2 sequential LLM calls — intent classification + reply generation — each
+  individually budgeted at the new 120s).
+- **`GenerationTimeoutError`** (`stores/generation/GenerationInterface.py`): a vendor-agnostic
+  exception every provider's `_post_chat_completion` translates `requests.exceptions.Timeout` into,
+  so `TextReplyController` never depends on a specific HTTP client's exception type crossing the
+  Ports & Adapters boundary. `classify_intent()` catches it internally and falls back to
+  `"unclassified"` (consistent with its existing "never raises" contract for any unparseable
+  response); `generate_reply()` lets it propagate, since only the controller layer should decide
+  patient-facing fallback text.
+- **`TextReplyController.GENERATION_UNAVAILABLE_FALLBACK`**: a small, deliberately-scoped exception to
+  the "every reply is a Bucket B/C template or live model output" rule — a generic technical-outage
+  notice used only when `generate_reply()` times out. Kept out of `prompt_templates.py` on purpose:
+  that module's own header requires every entry to be a verbatim transcription of real source
+  business documents, and an outage notice describes no business fact or policy, so inventing it as
+  "real source text" would be worse than a small, clearly-labeled, narrowly-scoped exception (the
+  same reasoning claude.md §1.3 already applies to Bucket B/C's own hardcoding carve-out, for a
+  different, genuinely non-business category of string).
+
 ## Environment variables
 
 | Variable | File | Purpose |
@@ -1774,8 +1949,8 @@ recorded in `chat_history`.
 | `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
 | `RERANKER_BACKEND` / `RERANKER_BACKEND_LITERAL` | `src/.env` | Re-ranker provider selection (currently only `CROSS_ENCODER`) |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
-| `GENERATION_BACKEND` / `GENERATION_BACKEND_LITERAL` | `src/.env` | Conversational-LLM provider selection (currently only `QWEN2_5_7B_INSTRUCT`) — Section 3 Step 1 |
-| `GENERATION_BASE_URL` | `src/.env` | Wherever the OpenAI-compatible Qwen2.5-7B-Instruct endpoint is actually served — **placeholder by default**, see Section 3 Step 1's Deployment note |
+| `GENERATION_BACKEND` / `GENERATION_BACKEND_LITERAL` | `src/.env` | Conversational-LLM provider selection — `QWEN2_5_7B_INSTRUCT` (production default), `FALCON_H1_34B_INSTRUCT`, `NILE_CHAT_12B`, `QWEN2_5_32B_INSTRUCT_AWQ` (Phase 0 bake-off candidates) |
+| `GENERATION_BASE_URL` | `src/.env` | Wherever the OpenAI-compatible endpoint for whichever `GENERATION_BACKEND` is selected is actually served — **placeholder by default**, see Section 3 Step 1's Deployment note and the Phase 0 bake-off section |
 | `GENERATION_MODEL_NAME` / `GENERATION_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Model name sent in the chat-completions request; HTTP timeout |
 | `SESSION_REDIS_URL` / `SESSION_TTL_SECONDS` / `SESSION_HISTORY_WINDOW` | `src/.env` | Tier 1 (Redis) of the two-tier chat-history architecture — Section 3 Step 1 |
 

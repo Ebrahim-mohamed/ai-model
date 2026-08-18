@@ -4,12 +4,14 @@ from sqlalchemy.orm import sessionmaker
 
 from routes import base, sync, retrieval, whatsapp
 from helpers.config import get_settings
+from helpers.logging_config import configure_logging
 from models.ClientConfigModel import ClientConfigModel
 from models.ChunkModel import ChunkModel
 from models.ChatHistoryModel import ChatHistoryModel
 from models.DialogueStateTemplateMapModel import DialogueStateTemplateMapModel
 from controllers.SyncController import SyncController
 from controllers.RetrievalController import RetrievalController
+from controllers.FieldSelectionController import FieldSelectionController
 from controllers.TextReplyController import TextReplyController
 from controllers.IntentRoutingController import IntentRoutingController
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
@@ -23,6 +25,12 @@ app = FastAPI()
 
 async def startup_span():
     settings = get_settings()
+
+    # First, before anything else logs a line — step-by-step RAG pipeline
+    # tracing (breadth classification, field selection, final CONTEXT
+    # construction) needs the FileHandler attached before any of those
+    # controllers run their first request.
+    configure_logging(log_file_path=settings.RAG_LOG_FILE_PATH, level_name=settings.RAG_LOG_LEVEL)
 
     postgres_conn = (
         f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
@@ -68,6 +76,13 @@ async def startup_span():
         reranker_client=app.reranker_client,
     )
 
+    # Structured field preservation (Section 3 Step 1 generation-quality
+    # fix) — reuses the SAME embedding_client instance already warmed up
+    # above for retrieval; no new model, no new provider, no new factory
+    # entry. Pure computation over already-tenant-scoped chunk data, so
+    # it has no client_config_model/DB dependency of its own.
+    app.field_selection_controller = FieldSelectionController(embedding_client=app.embedding_client)
+
     # Section 3 Step 1 — the WhatsApp text pipeline. generation_client is
     # a thin HTTP adapter (no local weights to warm up here, unlike
     # embedding_client/reranker_client above); it is not health-checked
@@ -90,6 +105,7 @@ async def startup_span():
         client_config_model=app.client_config_model,
         generation_client=app.generation_client,
         dialogue_state_template_map_model=app.dialogue_state_template_map_model,
+        field_selection_controller=app.field_selection_controller,
     )
     app.intent_routing_controller = IntentRoutingController(
         generation_client=app.generation_client,

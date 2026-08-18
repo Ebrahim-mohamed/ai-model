@@ -5,7 +5,7 @@ import re
 
 import requests
 
-from ..GenerationInterface import GenerationInterface
+from ..GenerationInterface import GenerationInterface, GenerationTimeoutError
 
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
@@ -31,6 +31,16 @@ _JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}")
 # of whether the deployed chat template's own EOS wiring is exactly right.
 QWEN_STOP_SEQUENCES = ["<|im_end|>"]
 
+# Re-introduced at a much smaller value after 1.1 was tried and reverted
+# (see _post_chat_completion below) — 1.1 was aggressive enough to push
+# this quantized model's sampling into unmapped territory (gibberish,
+# stray non-Arabic tokens); real traffic without any repetition_penalty
+# then surfaced its own real failure mode instead — short-phrase
+# stuttering (e.g. "تانية تانية"). A micro-value discourages the exact
+# kind of immediate-adjacent-token repeat that causes stuttering without
+# meaningfully reshaping the rest of the distribution the way 1.1 did.
+DEFAULT_REPETITION_PENALTY = 1.03
+
 
 class QwenProvider(GenerationInterface):
     """Talks to an OpenAI-compatible chat-completions endpoint serving
@@ -53,26 +63,31 @@ class QwenProvider(GenerationInterface):
         temperature: float,
         max_tokens: int,
         stop: list[str] | None = QWEN_STOP_SEQUENCES,
+        repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
     ) -> str:
-        # No repetition_penalty: tried at 1.1 and reverted — on this
-        # quantized 7B, penalizing token reuse at the low temperatures
-        # this task needs pushed sampling toward unmapped, low-probability
-        # territory instead of just varying phrasing, producing outright
-        # gibberish (a stray English word like "Zombies" appearing
-        # mid-Arabic-sentence) rather than the intended "avoid looping"
-        # effect. `stop` alone (a hard cutoff, not a soft distribution
-        # reshape) is the safer lever for this model at this size.
-        response = requests.post(
-            f"{self.base_url}{CHAT_COMPLETIONS_PATH}",
-            json={
-                "model": self.model_name,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stop": stop,
-            },
-            timeout=self.request_timeout_seconds,
-        )
+        try:
+            response = requests.post(
+                f"{self.base_url}{CHAT_COMPLETIONS_PATH}",
+                json={
+                    "model": self.model_name,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stop": stop,
+                    "repetition_penalty": repetition_penalty,
+                },
+                timeout=self.request_timeout_seconds,
+            )
+        except requests.exceptions.Timeout as e:
+            # Translated here, the one place this provider talks HTTP, so
+            # both call sites below (generate_reply, classify_intent)
+            # inherit it without duplicating the try/except — each then
+            # decides independently what a timeout means for its own
+            # contract (see their own docstrings/GenerationTimeoutError).
+            raise GenerationTimeoutError(
+                f"QwenProvider: request to {self.base_url}{CHAT_COMPLETIONS_PATH} "
+                f"timed out after {self.request_timeout_seconds}s"
+            ) from e
         response.raise_for_status()
         payload = response.json()
         return payload["choices"][0]["message"]["content"].strip()
@@ -168,9 +183,18 @@ class QwenProvider(GenerationInterface):
         # needs real room ahead of the JSON object, and a truncated
         # reasoning block would otherwise cut off before the JSON ever
         # gets emitted.
-        raw_response = await asyncio.to_thread(
-            self._post_chat_completion, messages, 0.0, 220
-        )
+        try:
+            raw_response = await asyncio.to_thread(
+                self._post_chat_completion, messages, 0.0, 220
+            )
+        except GenerationTimeoutError as e:
+            # classify_intent's own contract (see GenerationInterface) is
+            # to never raise — a timeout is just another way the model
+            # failed to produce a usable label, same bucket as unparseable
+            # JSON below. Unlike generate_reply, no patient-facing text is
+            # decided here, so there's nothing a caller needs to catch.
+            self.logger.warning(f"classify_intent: request timed out ({e}) — falling back to 'unclassified'")
+            return "unclassified"
 
         json_matches = _JSON_OBJECT_RE.findall(raw_response)
         intent = None

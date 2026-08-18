@@ -1,0 +1,404 @@
+[
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع بلبيس بيفتح لحد الساعة كام يوم الجمعة؟",
+    "expected_fact": "مواعيد الفروع يوم الجمعة: 1:00 pm to 11:00 pm",
+    "expected_behavior": "Should state Bilbeis branch's Friday hours as 1:00 PM to 11:00 PM, extracted from the real Branch Directory chunk."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "هو فرع سليمان أباظة مناسب لو معايا حد بكرسي متحرك؟",
+    "expected_fact": "معلومات الفرع كرسي متحرك: متاح",
+    "expected_behavior": "Should confirm wheelchair access is available at Suleiman Abaza (Mohandessin 1) branch."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "لو حصل طارئ وأنا في فرع حلوان، فيه عربية إسعاف موجودة؟",
+    "expected_fact": "معلومات الفرع الإسعاف: غير متاح",
+    "expected_behavior": "Should clearly state ambulance service is NOT available at the Helwan branch — must not invert this negative fact."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع شبرا التوفيقية فيه اسانسير ولا لازم اطلع سلم؟",
+    "expected_fact": "معلومات الفرع اسانسير: غير متاح",
+    "expected_behavior": "Should state elevator is NOT available at Shoubra 2 (Toufikeya school) branch — a real negative-fact case, not a fabricated one."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "ممكن ادفع بالفاليو في فرع المهندسين بتاع تكنوسكان؟",
+    "expected_fact": "معلومات الفرع فاليو: متاح",
+    "expected_behavior": "Should confirm ValU installment payment IS available at the Technoscan Mohandessin branch — note most other branches sampled say ValU unavailable, so this is a genuine positive exception worth testing."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "لو عايز اضيف رسم عصب بالإبرة على رسم العصب العادي، هياخد فلوس زياده؟",
+    "expected_fact": "اذا طلب العميل رسم عصب بالابرة يتم اضافة 500 جنية علي سعر الفحص واختيار خدمات اضافية خلال الحجز واختيار EMG Needle",
+    "expected_behavior": "Should state the needle EMG add-on costs an extra 500 EGP on top of the base exam price."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل ديناميكية تبول في فرع تكنوسكان، متاحة عندكم؟",
+    "expected_fact": "غير متاحه بتكنوسكان يتم التحويل لعيادات كايروسكان دار الفؤاد",
+    "expected_behavior": "Should say this exam is not available at Technoscan and the patient is transferred to Cairoscan's Dar El Fouad clinics."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "ممكن اعمل رسم قلب هولتر 72 ساعة في فرع كايروسكان؟",
+    "expected_fact": "غير متاحة كايرو سكان  يتم التحويل تكنو سكان",
+    "expected_behavior": "Should state the 72-hour Holter is not available under Cairoscan and the patient is referred to Technoscan."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل مسح ذري على القنوات المرارية Hida Scan، هو محتاج استعداد ايه وفين موجود؟",
+    "expected_fact": "تـحـضـيـرات الـفـحـص: صيام قبل الفحص ب 6 ساعات ... الـفروع Branches: المهندسين فقط",
+    "expected_behavior": "Should state 6-hour fasting is required and the exam is only available at the Mohandessin branch."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "الماموجرام الديجيتال متاح في اي فرع، وهل تقدر حامل تعمله؟",
+    "expected_fact": "الـفروع Branches: شبرا1 فقط (حاليا متوقف). ... غير متاح ماموجرام للحوامل",
+    "expected_behavior": "Should state it's only offered at Shubra 1 (currently paused) and is not available for pregnant women — should not omit the 'currently paused' caveat."
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "عندي تأمين جولدن، لازم اجيب ايه معايا عشان اخد موافقة من الفرع؟",
+    "expected_fact": "يتم احضار اصل الكارنيه واصل الروشته لاحضار موافقه من خلال الفرع. إمكانية إحضار جواب التحويل من خلال الفرع: نعم",
+    "expected_behavior": "Should state the patient needs the original insurance card and original prescription, and confirm a transfer letter can be brought via the branch."
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "انا عضو نادي المعادي الرياضي واليخت، تقدروا تجيبولي موافقة ولا الخصم بالكارنيه بس؟",
+    "expected_fact": "لا يتم  قبول او احضار موافقه خصم كارنيه فقط",
+    "expected_behavior": "Should clarify no prior-approval letter is accepted for this club — only a card-based discount."
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "لو جبت موافقة من تأمين عناية مصر، هتفضل سارية قد ايه؟",
+    "expected_fact": "ملاحظات: مدة صلاحية الموافقة 7  ايام",
+    "expected_behavior": "Should state the approval stays valid for 7 days."
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "أنا شغال في شركة رشيد للبترول، ينفع اجيب جواب التحويل من الفرع؟",
+    "expected_fact": "إمكانية إحضار جواب التحويل من خلال الفرع: لا",
+    "expected_behavior": "Should say no, a transfer letter cannot be brought via the branch for this company."
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "جمعية سبيل الرشاد الخيرية متعاقدة مع كايروسكان؟",
+    "expected_fact": "مسمى التعاقد على سيستم كايروسكان: غير متعاقده. مسمى التعاقد على سيستم تكنوسكان: جمعيه سبيل الرشاد الخيريه",
+    "expected_behavior": "Should say NOT contracted under Cairoscan, but IS contracted under Technoscan — a brand-specific distinction that must not be flattened into a single yes/no."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مقطعية الأمعاء الأسبوع الجاي، عايز اعرف التحضيرات ابتدي امتى؟",
+    "expected_fact": "هذا الفحص يتطلب تحضيرًا يبدأ قبل الموعد بـ 72 ساعة (3 أيام)",
+    "expected_behavior": "Should state prep begins 72 hours (3 days) before the CT Enterography appointment, and can summarize the key steps without inventing extra ones."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "وزني حوالي 130 كيلو، أقدر اعمل مقطعية شرايين القلب؟",
+    "expected_fact": "⚠️ تنبيه هام عند الحجز: لا يُجرى هذا الفحص للمرضى الذين يتجاوز وزنهم 120 كيلوجرامًا",
+    "expected_behavior": "Should clearly say this exam is not performed for patients over 120kg, so at 130kg the patient does not qualify — must not soften or omit this."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "الرنين بالصبغة محتاج مني اصوم قبله؟",
+    "expected_fact": "يتم عمل تحليل Creatinine لا يتعدا 14 يوم  لا يحتاج الي صيام مسبق",
+    "expected_behavior": "Should say no fasting is required, but a recent (within 14 days) Creatinine test is needed."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "عندي أشعة بالصبغة على المسالك البولية الأسبوع الجاي، عايز اعرف التحضيرات بالظبط",
+    "expected_fact": "3- صيام 6 ساعات قبل الفحص. 4- عمل حقنة شرجيه قبل الفحص ب 3 ساعات. 5- عمل تحليل وظائف الكلى كرياتنين حلال 14 يوم و تكون نسبته طبيعيه",
+    "expected_behavior": "Should list the real IVU prep steps (dietary restriction, laxative, 6-hour fasting, enema, recent creatinine test) grounded only in the CONTEXT, not inventing extra steps."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مسحة عنق الرحم، اعملها امتى بالظبط بعد الدورة؟",
+    "expected_fact": "يُجرى الفحص بعد انتهاء الدورة الشهرية بـ 10 أيام على الأقل",
+    "expected_behavior": "Should state the smear is done at least 10 days after the period ends, and mention avoiding vaginal creams/intercourse 24h before if relevant."
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة الفحص الشامل للسيدات سعرها كام؟",
+    "expected_fact": "السعر الكلي للباقة: 2000",
+    "expected_behavior": "Should state the total package price as 2000 EGP, copied literally from CONTEXT, not recalculated."
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "عايز اعرف سعر باقة الفحص الشامل للرجال",
+    "expected_fact": "السعر الكلي للباقة: 1700",
+    "expected_behavior": "Should state the total package price as 1700 EGP."
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "سمعت إن فيه خصم على باقة التحاليل الأولية، السعر بكام بعد الخصم؟",
+    "expected_fact": "السعر الكلي للباقة: 1000خصم 60% بدلا من 1705",
+    "expected_behavior": "Should state the discounted price is 1000 EGP (60% off the original 1705 EGP) — both numbers should be copied literally, not recomputed."
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة فحص مرضى السكر تكلفتها قد ايه؟",
+    "expected_fact": "السعر الكلي للباقة: 1330",
+    "expected_behavior": "Should state the diabetes checkup package total price as 1330 EGP."
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "محتاج اعمل باقة تحاليل ما قبل العمليات، هتكلفني كام؟",
+    "expected_fact": "السعر الكلي للباقة: 1900",
+    "expected_behavior": "Should state the pre-operative package total price as 1900 EGP."
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل السكر العشوائي محتاج تحضير معين؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should say the test is available with no special preparation conditions."
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "هعمل مزرعة بروستاتا، فيه حاجة لازم اعملها قبلها؟",
+    "expected_fact": "1- نمتنع عن اي مضاد حيوي لمده 48 ساعه قبل التحليل. 2- يفضل شرب كميه من الماء قبل الفحص و تؤخذ عينه بول قبل و بعد الفحص",
+    "expected_behavior": "Should mention avoiding antibiotics for 48 hours before and the water/sample-collection instructions, grounded only in CONTEXT."
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "الدورة اتأخرت يومين بس، أقدر اعمل تحليل حمل دم دلوقتي؟",
+    "expected_fact": "لابد ان تكون الدوره الشهريه متاخره عن ميعادها لمده 48 ساعه على الاقل",
+    "expected_behavior": "Should confirm 2 days (48 hours) of delay is the minimum required, so the test can be done now."
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "ممكن اعمل تحليل مستوى دواء الديباكين في الدم عندكم؟",
+    "expected_fact": "اتاحتها بالمعامل: غير متاح",
+    "expected_behavior": "Should clearly decline — this specific test is NOT available in the labs, must not be confused with an unrelated available test."
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل AMH بتاع كفاءة المبيض محتاج تحضير؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should confirm AMH is available with no special preparation needed."
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "وزني 190 كيلو، جهاز الرنين في فرع شبرا التوفيقية بيستحمل الوزن ده؟",
+    "expected_fact": "الرنين MRI  الوزن: 200 ك",
+    "expected_behavior": "Should confirm the MRI machine at Shoubra 2 supports up to 200kg, so 190kg is fine."
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "أقصى وزن مسموح بيه في جهاز المقطعية في فرع شبرا مصر كام؟",
+    "expected_fact": "المقطعية CT  الوزن: 210 ك",
+    "expected_behavior": "Should state the CT scanner weight limit at the Shubra Misr (Technoscan) branch is 210kg."
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه حد أقصى للوزن في جهاز المقطعية بتاع فرع دمياط؟",
+    "expected_fact": "المقطعية CT  الوزن: جميع الاوزان",
+    "expected_behavior": "Should state there is no weight restriction ('جميع الاوزان') for the CT scanner at the Damietta branch — a real no-limit case, distinct from branches with a numeric cap."
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "جهاز الرنين في فرع الشيخ زايد قوته كام تسلا؟",
+    "expected_fact": "الرنين MRI  تسلا: 1.5",
+    "expected_behavior": "Should state the MRI magnet strength at Sheikh Zayed branch is 1.5 Tesla."
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه جهاز رنين مغناطيسي في فرع اليوم الواحد؟",
+    "expected_fact": "الرنين MRI  الوزن: غير متاح",
+    "expected_behavior": "Should say MRI is not available at the Al-Youm Al-Wahed branch (device data marked unavailable)."
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "عايز اعمل دراسة ضغوطات فتحة الشرج، فين ينفع اعملها؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should state no special prep is needed and the exam is done via referral to the Dar El Fouad clinics department."
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "هعمل دراسة ديناميكية التبول، محتاج استعد ازاي؟",
+    "expected_fact": "وقف كافة ادوية المسالك لمدة يومين. احضار تحليل بول جديد ووظائف كلي جديدة وتكون سليمة بدون التهابات في مجري البول. صيام عن الاكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص. دخول الحمام وافراغ المثانة قبل الفحص",
+    "expected_behavior": "Should list stopping urinary meds for 2 days, fresh urine/kidney tests, 12-hour food-only fasting, and emptying the bladder — grounded only in CONTEXT."
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "لازم اجيب حاجة معايا لفحص مجال الابصار؟",
+    "expected_fact": "احضار روشتة بنوع الفحص من الطبيب المعالج. احضار مقاس النظارة في حالة ارتداء المريض النظارة الطبية",
+    "expected_behavior": "Should mention bringing a doctor's prescription and glasses prescription if applicable."
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "ممكن اعمل دراسة نوم في فرع تكنوسكان؟",
+    "expected_fact": "غير متاح في تكنوسكان يتم التحويل لقسم العيادات (فرع دار الفؤاد)",
+    "expected_behavior": "Should say sleep study is not available at Technoscan and the patient is referred to Dar El Fouad clinics."
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "فحص رسم المسارات السمعية BAEP محتاج تحضير؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should say no preparation is needed, done via Dar El Fouad clinics referral."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "ممكن تبعتولي التقرير على الواتساب؟",
+    "expected_fact": "نعم، يتم إرسال التقرير الطبي عبر واتساب على الرقم المسجّل في نظام الحجز فقط",
+    "expected_behavior": "Should confirm yes, but only to the phone number registered on the booking — should mention identity verification is required first."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "عايز اعمل رنين مخ مع أوردة المخ سوا وهدفع كاش، هل السعر هيبقى مجمع ولا كل فحص لوحده؟",
+    "expected_fact": "إذا كان المريض نقدي: يُعطى السعر الإجمالي المجمّع للفحصين أو الثلاثة فحوصات كما هو على النظام",
+    "expected_behavior": "Should confirm a cash patient gets one combined total price for both exams together, not separate prices."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "كارت لاكي بيرجعلي كام بالظبط من فلوس الأشعة؟",
+    "expected_fact": "تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية",
+    "expected_behavior": "Should state 25% cashback on radiology exams specifically (not confuse with the 15% labs rate)."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "أنا مريض غسيل كلى وعايز اعمل أشعة بالصبغة، ينفع؟",
+    "expected_fact": "نعم، يمكن إجراء الحجز. غير أنه يُشترط أن يتنسق المريض مع مركز غسيل الكلى الخاص به لإجراء جلسة الغسيل في غضون ساعتين من موعد الفحص. لا يُطلب تحليل كرياتينين في هذه الحالة",
+    "expected_behavior": "Should confirm booking is possible, no creatinine test is required, but the patient must coordinate a dialysis session within 2 hours of the exam."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "فرع المقطم بيحجز على نظام مين، كايروسكان ولا تكنوسكان؟",
+    "expected_fact": "فرع المقطم يُسجَّل الحجز عليه على نظام تكنوسكان دائمًا، سواء كان المريض تابعًا لتكنوسكان أو كايروسكان",
+    "expected_behavior": "Should state Mokattam branch always books on the Technoscan system regardless of the patient's own brand, with the one contract exception noted if relevant."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ابني عنده 3 سنين وهيعمل رنين بتخدير، يصوم قد ايه قبلها؟",
+    "expected_fact": "** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3 : 4 ساعات)",
+    "expected_behavior": "Should state fasting of 3 to 4 hours for a child aged 2-4 years."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "خدمة التخدير الكلي متاحة في فرع الحوامدية؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الحوامديه. Accounts: تكنوسكان",
+    "expected_behavior": "Should confirm anesthesia is available at the El-Hawamdeya (Technoscan) branch."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "عايز اعرف لو التخدير الكلي متاح في فرع دار الفؤاد مدينة نصر",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: دار الفؤاد مدينة نصر. Accounts: كايروسكان",
+    "expected_behavior": "Should confirm anesthesia is available at Dar El Fouad Nasr City (Cairoscan) branch."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ينفع اعمل تخدير كلي لابني في فرع الشيخ زايد؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الشيخ زايد متوقف حاليا",
+    "expected_behavior": "Should say anesthesia at the Sheikh Zayed branch is currently paused/unavailable, not simply 'available'."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "هيتم التخدير ازاي بالظبط، عن طريق الوريد ولا حقنة ولا استنشاق؟",
+    "expected_fact": "نرجو عدم ذكر نوع التخدير للمريض سواء عن طريق الوريد أو الفم أو عن طريق الاستنشاق مع ذكر أن هذه رؤية فنية يتم تقييمها من قبل طبيب التخدير",
+    "expected_behavior": "This is an internal-only directive: the system should NOT reveal or confirm the specific anesthesia method to the patient, and should instead note this is a clinical decision made by the anesthesiologist — a good probe for whether internal-only content leaks into patient-facing replies."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة تأمين بنك مصر بتفضل سارية قد ايه؟",
+    "expected_fact": "الشركة: بنك مصر. مده الصلاحية: 10ايام",
+    "expected_behavior": "Should state the approval validity is 10 days for Banque Misr."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "لو جبت موافقة بوبا امتى تنتهي صلاحيتها؟",
+    "expected_fact": "الشركة: بوبا. مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Bupa."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة عناية مصر مدتها كام يوم؟",
+    "expected_fact": "الشركة: عناية مصر. مده الصلاحية: 7 ايام",
+    "expected_behavior": "Should state the approval validity is 7 days for Aemaya Egypt."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "تأمين ميت لايف اليكو، الموافقة سارية قد ايه؟",
+    "expected_fact": "الشركة: ميت لايف (اليكو). مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for MetLife (Alico)."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "عندي تأمين يونيكر، الموافقة بتاعته بتفضل كام يوم؟",
+    "expected_fact": "الشركة: يوينيكر . مده الصلاحية:  14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Uniqa."
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ابني عنده 16 سنة، يقدر ياخد كارت لاكي؟",
+    "expected_fact": "البند: السن. الشرط: 18 سنة فأكثر",
+    "expected_behavior": "Should say no — eligibility requires being 18 years or older, so a 16-year-old does not qualify."
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ممكن اخويا ياخد فلوس الكاش باك بدالي؟",
+    "expected_fact": "البند: طريقة الاستلام. الشرط: العميل بنفسه + بطاقة شخصية + إيصال",
+    "expected_behavior": "Should say no — the patient must collect it in person with their own ID and receipt, not via a relative."
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "سعر الصبغة بيتحسب في كاش باك كارت لاكي؟",
+    "expected_fact": "البند: غير مشمول. الشرط: الصبغة – التخدير – أتعاب الطبيب – أي إضافات",
+    "expected_behavior": "Should say no — contrast dye cost is explicitly excluded from the cashback calculation, along with anesthesia, doctor fees, and add-ons."
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "كارت لاكي شغال لو عملت الفحص في فرع بالدلتا؟",
+    "expected_fact": "البند: النطاق الجغرافي. الشرط: فروع القاهرة والجيزة فقط وغير متاح في فروع الدلتا وتشمل شبرا الخيمه والعبور والدلتا والصعيد والفرانشيز",
+    "expected_behavior": "Should say no — the card is only valid at Cairo/Giza branches, explicitly excluding Delta branches."
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "فلوس الكاش باك بترجع بعد قد ايه؟",
+    "expected_fact": "البند: مدة رجوع الكاش باك. الشرط: 5–7 أيام عمل (بدون جمعة وسبت)",
+    "expected_behavior": "Should state 5-7 business days, excluding Friday and Saturday."
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "شركة التأمين بتاعتي مش متعاقدة معاكم، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: جهة غير متعاقدة معنا. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card is not offered when the insurer isn't contracted with the center."
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "التأمين مش بيغطي الفحص اللي هعمله، هينفع اخد لاكي؟",
+    "expected_fact": "الحالة: فحص غير مُغطّى تأمينياً. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card does not apply when the specific exam isn't covered by insurance."
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "رصيد تأميني خلص وهدفع كاش، هاخد لاكي؟",
+    "expected_fact": "الحالة: عميل رصيده التأميني منتهي ويدفع كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card applies when the insurance balance is exhausted and the patient is paying cash."
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "أنا مش عندي تأمين طبي خالص، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: عميل بدون تأمين طبي. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card is available for patients with no medical insurance at all."
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "عندي تأمين بس عايز ادفع كاش، هاخد لاكي برضه؟",
+    "expected_fact": "الحالة: عميل لديه تأمين وطلب الفحص كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card still applies even if the patient has insurance but chooses to pay cash for this exam."
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "نسبة كاش باك كارت لاكي على التحاليل قد ايه بالظبط؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: التحاليل. النسبه: 0.15",
+    "expected_behavior": "Should state the cashback rate on lab tests is 15% (0.15). Note: this sheet only has 2 rows total in the whole database, both included here."
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "طيب نسبة الكاش باك على الأشعة كام؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: الاشعه. النسبه: 0.25",
+    "expected_behavior": "Should state the cashback rate on radiology exams is 25% (0.25)."
+  }
+]

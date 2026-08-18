@@ -1,0 +1,538 @@
+[
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع بلبيس بيفتح لحد الساعة كام يوم الجمعة؟",
+    "expected_fact": "مواعيد الفروع يوم الجمعة: 1:00 pm to 11:00 pm",
+    "expected_behavior": "Should state Bilbeis branch's Friday hours as 1:00 PM to 11:00 PM, extracted from the real Branch Directory chunk.",
+    "session_id": "4c0862be-34ed-46a6-9cfa-4e15ef0a0d09",
+    "actual_reply": "فرع بلبيس بيفتح يوم الجمعة من 1:00 عصرًا لحد 11:00 مساء. عايز تعرف أي حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "هو فرع سليمان أباظة مناسب لو معايا حد بكرسي متحرك؟",
+    "expected_fact": "معلومات الفرع كرسي متحرك: متاح",
+    "expected_behavior": "Should confirm wheelchair access is available at Suleiman Abaza (Mohandessin 1) branch.",
+    "session_id": "109b7bac-9242-42f5-baa6-f03169f8c136",
+    "actual_reply": "فرع سليمان أباظة من فروعنا، بس للأسف مش موجود في الـCONTEXT أي معلومة عن خدمات خاصة للأشخاص ذوي الاحتياجات الخاصة أو وجود أسانسير. لو فيه حاجة تانية بحاول أساعدك بيها."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "لو حصل طارئ وأنا في فرع حلوان، فيه عربية إسعاف موجودة؟",
+    "expected_fact": "معلومات الفرع الإسعاف: غير متاح",
+    "expected_behavior": "Should clearly state ambulance service is NOT available at the Helwan branch — must not invert this negative fact.",
+    "session_id": "94424f98-73b7-44b3-ae5e-4d0b74f9476b",
+    "actual_reply": "أيوه يا فندم، في فرع حلوان في عربية إسعاف متوفرة. لو احتجت أي مساعدة تانية، قول."
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع شبرا التوفيقية فيه اسانسير ولا لازم اطلع سلم؟",
+    "expected_fact": "معلومات الفرع اسانسير: غير متاح",
+    "expected_behavior": "Should state elevator is NOT available at Shoubra 2 (Toufikeya school) branch — a real negative-fact case, not a fabricated one.",
+    "session_id": "8c88b9ce-87bf-44a9-961f-6511eb5df830",
+    "actual_reply": "فرع شبرا التوفيقية للأسف مش فيه أسانسير، لازم تطلع سلم يا فندم. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "ممكن ادفع بالفاليو في فرع المهندسين بتاع تكنوسكان؟",
+    "expected_fact": "معلومات الفرع فاليو: متاح",
+    "expected_behavior": "Should confirm ValU installment payment IS available at the Technoscan Mohandessin branch — note most other branches sampled say ValU unavailable, so this is a genuine positive exception worth testing.",
+    "session_id": "b441216e-7d49-42e6-9b1c-34fb9d2cbf09",
+    "actual_reply": "أيوه يا فندم، ممكن تدفع بالفاليو في فرع المهندسين بتاع رايلاب. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "لو عايز اضيف رسم عصب بالإبرة على رسم العصب العادي، هياخد فلوس زياده؟",
+    "expected_fact": "اذا طلب العميل رسم عصب بالابرة يتم اضافة 500 جنية علي سعر الفحص واختيار خدمات اضافية خلال الحجز واختيار EMG Needle",
+    "expected_behavior": "Should state the needle EMG add-on costs an extra 500 EGP on top of the base exam price.",
+    "session_id": "86854f6a-004c-4b04-a712-80ddcf3459d4",
+    "actual_reply": "أيوه يا فندم، لو عايز تعمل رسم عصب بالإبرة مع الرسم العادي، هيتم إضافة 500 جنيه زيادة على سعر الفحص. ممكن أساعدك بحجز أو أي حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل ديناميكية تبول في فرع تكنوسكان، متاحة عندكم؟",
+    "expected_fact": "غير متاحه بتكنوسكان يتم التحويل لعيادات كايروسكان دار الفؤاد",
+    "expected_behavior": "Should say this exam is not available at Technoscan and the patient is transferred to Cairoscan's Dar El Fouad clinics.",
+    "session_id": "53ecae11-5bf8-48ae-a67f-3a1212c09d11",
+    "actual_reply": "أسف يا فندم، ديناميكية التبول مش متاحة عندنا في فرع تكنوسكان. إحنا بنحولك لعيادات كايروسكان دار الفؤاد عشان تعملها هناك. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "ممكن اعمل رسم قلب هولتر 72 ساعة في فرع كايروسكان؟",
+    "expected_fact": "غير متاحة كايرو سكان  يتم التحويل تكنو سكان",
+    "expected_behavior": "Should state the 72-hour Holter is not available under Cairoscan and the patient is referred to Technoscan.",
+    "session_id": "09d71872-1cd8-43de-ab19-c0df46ac82b9",
+    "actual_reply": "أيوه يا فندم، للأسف مركز رايلاب في السويس، أبو كبير، وشبرا مصر - الحوامدية، ومافيش فرع اسمه كايروسكان. إحنا متخصصين في الأشعة والتحاليل الطبية بس للأسف رسم قلب هولتر 72 ساعة مش من ضمن خدماتنا. ممكن أساعدك في حجز أي خدمة طبية متاحة عندنا؟"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل مسح ذري على القنوات المرارية Hida Scan، هو محتاج استعداد ايه وفين موجود؟",
+    "expected_fact": "تـحـضـيـرات الـفـحـص: صيام قبل الفحص ب 6 ساعات ... الـفروع Branches: المهندسين فقط",
+    "expected_behavior": "Should state 6-hour fasting is required and the exam is only available at the Mohandessin branch.",
+    "session_id": "201555f5-ebed-48dd-b217-7056d8db6898",
+    "actual_reply": "لعمل مسح ذري على القنوات المرارية Hida Scan، لازم تكون صائم من 6 ساعات قبل الفحص، وتأكد إنك معاك أي أشعة قديمة ليها علاقة بالشكاية اللي عندك. الفحص متوفر بس في فرع المهندسين، ومحتاج تبتعد عن الأطفال والحوامل لمدة 24 ساعة بعد ما تعمل الأشعة. ممكن تسأل عن الوزن والحمل، والأقصى وزن مسموح بيه 120 كجم. لو عايز تعرف حاجة تانية، قول."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "الماموجرام الديجيتال متاح في اي فرع، وهل تقدر حامل تعمله؟",
+    "expected_fact": "الـفروع Branches: شبرا1 فقط (حاليا متوقف). ... غير متاح ماموجرام للحوامل",
+    "expected_behavior": "Should state it's only offered at Shubra 1 (currently paused) and is not available for pregnant women — should not omit the 'currently paused' caveat.",
+    "session_id": "05f84e4d-c0bf-422d-8b9d-8cb069ea268d",
+    "actual_reply": "ماموجرام الديجيتال متوفر في التجمع الخامس، شبرا 1 (حاليا متوقف)، وحدة المراه، الف مسكن، دار الفؤاد. للأسف، مش متاح للحوامل. ممكن أساعدك بحاجه تانية؟"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "عندي تأمين جولدن، لازم اجيب ايه معايا عشان اخد موافقة من الفرع؟",
+    "expected_fact": "يتم احضار اصل الكارنيه واصل الروشته لاحضار موافقه من خلال الفرع. إمكانية إحضار جواب التحويل من خلال الفرع: نعم",
+    "expected_behavior": "Should state the patient needs the original insurance card and original prescription, and confirm a transfer letter can be brought via the branch.",
+    "session_id": "dba743c3-6e5e-4ab3-8f3e-2354c186fa1f",
+    "actual_reply": "لازم تجيب معاك أصل الكارنيه واصل الروشته عشان نقدر نديك موافقة من الفرع يا فندم. عندك أي استفسارات تانية؟"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "انا عضو نادي المعادي الرياضي واليخت، تقدروا تجيبولي موافقة ولا الخصم بالكارنيه بس؟",
+    "expected_fact": "لا يتم  قبول او احضار موافقه خصم كارنيه فقط",
+    "expected_behavior": "Should clarify no prior-approval letter is accepted for this club — only a card-based discount.",
+    "session_id": "f6c61905-0206-49b7-93e8-da527029b995",
+    "actual_reply": "أكيد يا فندم، الخصم بيتم بالكارنيه فقط، مش محتاج موافقة مخصوصة. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "لو جبت موافقة من تأمين عناية مصر، هتفضل سارية قد ايه؟",
+    "expected_fact": "ملاحظات: مدة صلاحية الموافقة 7  ايام",
+    "expected_behavior": "Should state the approval stays valid for 7 days.",
+    "session_id": "c11ac911-7843-4be5-9ca4-09612cedf00a",
+    "actual_reply": "الموافقة من تأمين عناية مصر هتفضل سارية لمدة 7 أيام يا فندم. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "أنا شغال في شركة رشيد للبترول، ينفع اجيب جواب التحويل من الفرع؟",
+    "expected_fact": "إمكانية إحضار جواب التحويل من خلال الفرع: لا",
+    "expected_behavior": "Should say no, a transfer letter cannot be brought via the branch for this company.",
+    "session_id": "1451fcc0-0a8f-4e10-8115-1c3a698bcf12",
+    "actual_reply": "لا يا فندم، للأسف مش هنقدر نستلم جواب التحويل من الفرع. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "جمعية سبيل الرشاد الخيرية متعاقدة مع كايروسكان؟",
+    "expected_fact": "مسمى التعاقد على سيستم كايروسكان: غير متعاقده. مسمى التعاقد على سيستم تكنوسكان: جمعيه سبيل الرشاد الخيريه",
+    "expected_behavior": "Should say NOT contracted under Cairoscan, but IS contracted under Technoscan — a brand-specific distinction that must not be flattened into a single yes/no.",
+    "session_id": "7bed7dc6-e22e-48e7-982e-a44fd1a21f6d",
+    "actual_reply": "لا يا فندم، جمعية سبيل الرشاد الخيرية مش متعاقدة مع كايروسكان. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مقطعية الأمعاء الأسبوع الجاي، عايز اعرف التحضيرات ابتدي امتى؟",
+    "expected_fact": "هذا الفحص يتطلب تحضيرًا يبدأ قبل الموعد بـ 72 ساعة (3 أيام)",
+    "expected_behavior": "Should state prep begins 72 hours (3 days) before the CT Enterography appointment, and can summarize the key steps without inventing extra ones.",
+    "session_id": "51736630-78e5-4a82-b5de-c4e9897fb595",
+    "actual_reply": "التحضيرات للمقطعية بتبدأ بصيام 6 ساعات كاملة قبل الفحص، وكمان لازم تعمل تحليل Creatinine محدش يتعداه 14 يوم. لو عندك أي استفسارات تانية، قول."
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "وزني حوالي 130 كيلو، أقدر اعمل مقطعية شرايين القلب؟",
+    "expected_fact": "⚠️ تنبيه هام عند الحجز: لا يُجرى هذا الفحص للمرضى الذين يتجاوز وزنهم 120 كيلوجرامًا",
+    "expected_behavior": "Should clearly say this exam is not performed for patients over 120kg, so at 130kg the patient does not qualify — must not soften or omit this.",
+    "session_id": "b7b04b14-bbc5-4dd4-aa7c-e5cca5a2c5f5",
+    "actual_reply": "أيوه يا فندم، تقدر تعمل مقطعية شرايين القلب CT Coronary Angio With Calcium Scoring لو وزنك 130 كيلو. بس لازم تعرف إن أقصى وزن في معظم الفروع 120 كيلو، ماعدا فرع شبرا مصر في تكنوسكان اللي ب accommodates وزن 210 كيلو. ممكن تحجز في فرع شبرا مصر. حابب أساعدك بالحجز ولا تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "الرنين بالصبغة محتاج مني اصوم قبله؟",
+    "expected_fact": "يتم عمل تحليل Creatinine لا يتعدا 14 يوم  لا يحتاج الي صيام مسبق",
+    "expected_behavior": "Should say no fasting is required, but a recent (within 14 days) Creatinine test is needed.",
+    "session_id": "e1a8ad07-9632-45da-9a4a-dd7e6931c911",
+    "actual_reply": "لا، يا فندم، الرنين المغناطيسي بالصبغة مش محتاج منك صيام مسبق. بس لازم تعمل تحليل Creatinine خلال 14 يوم قبل الفحص. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "عندي أشعة بالصبغة على المسالك البولية الأسبوع الجاي، عايز اعرف التحضيرات بالظبط",
+    "expected_fact": "3- صيام 6 ساعات قبل الفحص. 4- عمل حقنة شرجيه قبل الفحص ب 3 ساعات. 5- عمل تحليل وظائف الكلى كرياتنين حلال 14 يوم و تكون نسبته طبيعيه",
+    "expected_behavior": "Should list the real IVU prep steps (dietary restriction, laxative, 6-hour fasting, enema, recent creatinine test) grounded only in the CONTEXT, not inventing extra steps.",
+    "session_id": "a98ae8c6-26e1-4462-a348-a4fded23b83f",
+    "actual_reply": "السلام عليكم يا فندم! تحضيرات أشعة المسالك البولية بالصبغة هي: \n1- قبل الفحص بيوم توقف عن أكل منتجات الألبان والبيض ومشروبات الغازية. \n2- بعد وجبة العشاء خ prhaben زيت خروع أو خ prhaben ملين. \n3- صيام تام 6 ساعات قبل الفحص. \n4- لازم تعمل تحليل وظائف الكلى (Creatinine) محدش يتعدي عليه 14 يوم. \n5- قبل الفحص ب3 ساعات لازم تعمل حقنة شرجية. \n\nعايز أعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مسحة عنق الرحم، اعملها امتى بالظبط بعد الدورة؟",
+    "expected_fact": "يُجرى الفحص بعد انتهاء الدورة الشهرية بـ 10 أيام على الأقل",
+    "expected_behavior": "Should state the smear is done at least 10 days after the period ends, and mention avoiding vaginal creams/intercourse 24h before if relevant.",
+    "session_id": "7f2ddb05-cb36-4c35-9de6-b359a8f51000",
+    "actual_reply": "أنا آسفة يا فندم، لكن للأسف مركز رايلاب متخصص في الأشعة والتحاليل الطبية وبس، ومافيش عندنا معلومات محددة عن إمتى تعمل مسحة عنق الرحم بعد الدورة. ممكن تتأكد من دكتورة أسماء ماهر في الدور 14، لأنها ممكن تعرف إمتى أفضل وقت عشان تعمل التحليل ده. تحب أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة الفحص الشامل للسيدات سعرها كام؟",
+    "expected_fact": "السعر الكلي للباقة: 2000",
+    "expected_behavior": "Should state the total package price as 2000 EGP, copied literally from CONTEXT, not recalculated.",
+    "session_id": "177dda4a-d872-4088-8ee3-f668ad20220c",
+    "actual_reply": "باقة الفحص الشامل للسيدات سعرها 2000 جنيه يا فندم. عايز تعرف أي حاجة تانية؟"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "عايز اعرف سعر باقة الفحص الشامل للرجال",
+    "expected_fact": "السعر الكلي للباقة: 1700",
+    "expected_behavior": "Should state the total package price as 1700 EGP.",
+    "session_id": "e13016e4-79be-4b3c-b36f-11174d5a9033",
+    "actual_reply": "سعر باقة الفحص الشامل للرجال هي 1700 جنيه يا فندم. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "سمعت إن فيه خصم على باقة التحاليل الأولية، السعر بكام بعد الخصم؟",
+    "expected_fact": "السعر الكلي للباقة: 1000خصم 60% بدلا من 1705",
+    "expected_behavior": "Should state the discounted price is 1000 EGP (60% off the original 1705 EGP) — both numbers should be copied literally, not recomputed.",
+    "session_id": "cb7c8c8c-bbbf-437b-8327-fed4559d906a",
+    "actual_reply": "السعر بعد الخصم ب 1000 جنيه يا فندم، بدل ما يكون 1705. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة فحص مرضى السكر تكلفتها قد ايه؟",
+    "expected_fact": "السعر الكلي للباقة: 1330",
+    "expected_behavior": "Should state the diabetes checkup package total price as 1330 EGP.",
+    "session_id": "141f49df-96dc-44ce-b9f1-4ee80c878798",
+    "actual_reply": "باقة فحص مرضي السكر بتتكلف 1330 جنيه يا فندم. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "محتاج اعمل باقة تحاليل ما قبل العمليات، هتكلفني كام؟",
+    "expected_fact": "السعر الكلي للباقة: 1900",
+    "expected_behavior": "Should state the pre-operative package total price as 1900 EGP.",
+    "session_id": "57db4992-2990-4f8a-9d47-0d7247b52a71",
+    "actual_reply": "باقة تحاليل ما قبل العمليات بتتكلف 1900 جنيه يا فندم. محتاجة حاجة تانية؟"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل السكر العشوائي محتاج تحضير معين؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should say the test is available with no special preparation conditions.",
+    "session_id": "0744d691-d141-4eb6-a13b-a9d5d7a9cb9a",
+    "actual_reply": "لا يا فندم، تحاليل ما قبل العمليات مش محتاجة أي تحضير معين. السكر العشوائي هيكون ضمن التحاليل دي، ومش محتاج منك حاجة قبل ما تعمل التحليل. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "هعمل مزرعة بروستاتا، فيه حاجة لازم اعملها قبلها؟",
+    "expected_fact": "1- نمتنع عن اي مضاد حيوي لمده 48 ساعه قبل التحليل. 2- يفضل شرب كميه من الماء قبل الفحص و تؤخذ عينه بول قبل و بعد الفحص",
+    "expected_behavior": "Should mention avoiding antibiotics for 48 hours before and the water/sample-collection instructions, grounded only in CONTEXT.",
+    "session_id": "f64dfbce-a8f5-410b-8dd4-278f6a9b79a3",
+    "actual_reply": "أيوه يا فندم، قبل ما تعمل مزرعة بروستاتا لازم تتأكد من حاجات. الأول، متاخدش أي مضاد حيوي لمدة 48 ساعة قبل التحليل. التاني، يفضل تشرب كمية من الماء قبل الفحص، وتاخد عينه بول قبل و بعد الفحص. وتجمع العينات في اكواب معقمه. وبعد كده، لازم ترسِل العينة إلى المعمل في خلال ساعة، و آخر موعد لاستلامها قبل قفل الفرع بساعة. لو عندك أي استفسارات تانية، ممكن أساعدك في إيه؟"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "الدورة اتأخرت يومين بس، أقدر اعمل تحليل حمل دم دلوقتي؟",
+    "expected_fact": "لابد ان تكون الدوره الشهريه متاخره عن ميعادها لمده 48 ساعه على الاقل",
+    "expected_behavior": "Should confirm 2 days (48 hours) of delay is the minimum required, so the test can be done now.",
+    "session_id": "eb7c713b-cfcc-401d-b586-a27f0cd21276",
+    "actual_reply": "لا يا فندم، عشان نتأكد من النتيجة لازم الدورة الشهرية تكون متاخرة عن ميعادها لمدة 48 ساعة على الأقل. دلوقتي ممكن تعملى تحليل حمل دم بس النتائج ممكن تكون مش دقيقة. عايزاكى تعملى التحليل بعد كده بيومين. فيه حاجة تانية أقدر أساعدك بيها؟"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "ممكن اعمل تحليل مستوى دواء الديباكين في الدم عندكم؟",
+    "expected_fact": "اتاحتها بالمعامل: غير متاح",
+    "expected_behavior": "Should clearly decline — this specific test is NOT available in the labs, must not be confused with an unrelated available test.",
+    "session_id": "9d29e664-9bad-415b-a18a-9efbeadb77bd",
+    "actual_reply": "أسف يا فندم، مركز رايلاب مش بيقدم تحليل مستوى دواء Depakene في الدم، سواء بعد الجرعة أو قبلها. الخدمة دي غير متاحة عندنا. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل AMH بتاع كفاءة المبيض محتاج تحضير؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should confirm AMH is available with no special preparation needed.",
+    "session_id": "efaaebdc-61ba-457d-b30b-431471b1a1a8",
+    "actual_reply": "لا يا فندم، تحاليل ما قبل العمليات - Pre-op مش محتاجة تحضير، بس للأسف تحليل AMH مش مذكور هنا. مركز رايلاب متخصص في الأشعة والتحاليل الطبية بس مش متأكدين من تفاصيل كل تحليل. ممكن أساعدك بشيء تاني؟"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "وزني 190 كيلو، جهاز الرنين في فرع شبرا التوفيقية بيستحمل الوزن ده؟",
+    "expected_fact": "الرنين MRI  الوزن: 200 ك",
+    "expected_behavior": "Should confirm the MRI machine at Shoubra 2 supports up to 200kg, so 190kg is fine.",
+    "session_id": "12970bf9-762b-4f01-b1f8-30c17f3a3d13",
+    "actual_reply": "لا يا فندم، جهاز الرنين في فرع شبرا 2 (مدرسة التوفيقية) بيستحمل أقصى وزن 200 ك، يعني تقدر تعمل الرنين عادي. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "أقصى وزن مسموح بيه في جهاز المقطعية في فرع شبرا مصر كام؟",
+    "expected_fact": "المقطعية CT  الوزن: 210 ك",
+    "expected_behavior": "Should state the CT scanner weight limit at the Shubra Misr (Technoscan) branch is 210kg.",
+    "session_id": "3f57e34a-e35d-46eb-ad31-00af2553c802",
+    "actual_reply": "أقصى وزن مسموح بيه في جهاز المقطعية CT في فرع شبرا مصر هو 210 كيلو يا فندم. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه حد أقصى للوزن في جهاز المقطعية بتاع فرع دمياط؟",
+    "expected_fact": "المقطعية CT  الوزن: جميع الاوزان",
+    "expected_behavior": "Should state there is no weight restriction ('جميع الاوزان') for the CT scanner at the Damietta branch — a real no-limit case, distinct from branches with a numeric cap.",
+    "session_id": "d287136d-3f82-42ce-af38-71a6697d94fe",
+    "actual_reply": "لا يا فندم، في فرع دمياط الجهاز المقطعي CT بيتحمل جميع الأوزان. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "جهاز الرنين في فرع الشيخ زايد قوته كام تسلا؟",
+    "expected_fact": "الرنين MRI  تسلا: 1.5",
+    "expected_behavior": "Should state the MRI magnet strength at Sheikh Zayed branch is 1.5 Tesla.",
+    "session_id": "94edda2e-a073-4d09-b980-b0256811275d",
+    "actual_reply": "جهاز الرنين في فرع الشيخ زايد قوته 1.5 تسلا. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه جهاز رنين مغناطيسي في فرع اليوم الواحد؟",
+    "expected_fact": "الرنين MRI  الوزن: غير متاح",
+    "expected_behavior": "Should say MRI is not available at the Al-Youm Al-Wahed branch (device data marked unavailable).",
+    "session_id": "b6fa85c6-2994-4c3b-8ebb-a36378d7d6af",
+    "actual_reply": "أيوه يا فندم، عندنا جهاز رنين مغناطيسي في فرع التجمع الخامس ارينا مول. لو عايز تحجز أو تعرف تفاصيل تانية، ممكن أعملك إيه؟"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "عايز اعمل دراسة ضغوطات فتحة الشرج، فين ينفع اعملها؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should state no special prep is needed and the exam is done via referral to the Dar El Fouad clinics department.",
+    "session_id": "4067ecec-77dc-4620-b64d-d05257c0843a",
+    "actual_reply": "الفحص اللي بتتكلم عنه يا فندم، \"Anal Manometry\"، بيتم في قسم العيادات بفرع دار الفؤاد. عايز حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "هعمل دراسة ديناميكية التبول، محتاج استعد ازاي؟",
+    "expected_fact": "وقف كافة ادوية المسالك لمدة يومين. احضار تحليل بول جديد ووظائف كلي جديدة وتكون سليمة بدون التهابات في مجري البول. صيام عن الاكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص. دخول الحمام وافراغ المثانة قبل الفحص",
+    "expected_behavior": "Should list stopping urinary meds for 2 days, fresh urine/kidney tests, 12-hour food-only fasting, and emptying the bladder — grounded only in CONTEXT.",
+    "session_id": "0daaf759-ff99-49bf-bd4a-8e1e79633e17",
+    "actual_reply": "استعدادات دراسة ديناميكية التبول يا فندم هي: وقف كل أدوية المسالك لمدة يومين، إحضار تحليل بول جديد ووظائف كلي جديدة تكون سليمة بدون التهابات في مجري البول، صيام عن الأكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص، ودخل الحمام وافراغ المثانة قبل الفحص. كل ده هيتعمل في قسم العيادات فرع دار الفؤاد. محتاج تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "لازم اجيب حاجة معايا لفحص مجال الابصار؟",
+    "expected_fact": "احضار روشتة بنوع الفحص من الطبيب المعالج. احضار مقاس النظارة في حالة ارتداء المريض النظارة الطبية",
+    "expected_behavior": "Should mention bringing a doctor's prescription and glasses prescription if applicable.",
+    "session_id": "19a6455b-c9ce-4927-80ba-890548d8a26a",
+    "actual_reply": "لا، يا فندم، مركز رايلاب متخصص في الأشعة والتحاليل الطبية وبس، مش عندنا خدمات لفحص مجال الإبصار. لو عايز تعمل أشعة أو تحاليل طبية، إحنا هنا لمساعدتك. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "ممكن اعمل دراسة نوم في فرع تكنوسكان؟",
+    "expected_fact": "غير متاح في تكنوسكان يتم التحويل لقسم العيادات (فرع دار الفؤاد)",
+    "expected_behavior": "Should say sleep study is not available at Technoscan and the patient is referred to Dar El Fouad clinics.",
+    "session_id": "8c3ad88c-a88a-4db5-9857-656d878444be",
+    "actual_reply": "عشان أساعدك، للأسف مركز رايلاب في فرع تكنوسكان مش بيقدم خدمة دراسة النوم. إحنا بنحول أي طلبات للحجز أو الاستعلامات لقسم العيادات في فرع دار الفؤاد. ممكن أعملك حجز في فرع دار الفؤاد؟"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "فحص رسم المسارات السمعية BAEP محتاج تحضير؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should say no preparation is needed, done via Dar El Fouad clinics referral.",
+    "session_id": "5444bb60-1de7-4483-b3ed-a025f0615e0a",
+    "actual_reply": "لا يا فندم، فحص BAEP مش محتاج أي تحضيرات. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "ممكن تبعتولي التقرير على الواتساب؟",
+    "expected_fact": "نعم، يتم إرسال التقرير الطبي عبر واتساب على الرقم المسجّل في نظام الحجز فقط",
+    "expected_behavior": "Should confirm yes, but only to the phone number registered on the booking — should mention identity verification is required first.",
+    "session_id": "e3a3cfaf-1acc-46a7-992a-827971ea1b45",
+    "actual_reply": "أكيد يا فندم، إحنا بنب renvo التقرير الطبي على الواتساب على الرقم اللي مسجل في نظام الحجز. بس قبل ما نرسله بنتحقق من هويتك بالاسم الرباعي ورقم الهاتف وتاريخ واسم الفحص ونوع الدفع والمبلغ المدفوع. لو الرقم اللي عندنا مش بيشتغل على الواتساب، تقدر تستلم التقرير من أي فرع بإيصال الدفع أو بطاقة المريض. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "عايز اعمل رنين مخ مع أوردة المخ سوا وهدفع كاش، هل السعر هيبقى مجمع ولا كل فحص لوحده؟",
+    "expected_fact": "إذا كان المريض نقدي: يُعطى السعر الإجمالي المجمّع للفحصين أو الثلاثة فحوصات كما هو على النظام",
+    "expected_behavior": "Should confirm a cash patient gets one combined total price for both exams together, not separate prices.",
+    "session_id": "f019eb46-1458-44ec-9486-3912f8a8a760",
+    "actual_reply": "أيوه يا فندم، تقدر تحجز رنين المخ مع أوردة المخ في نفس الوقت. لأنك هتدفع نقدًا، هيبقى السعر الإجمالي مجمع للفحصين زي ما هو على النظام. عايز تعرف السعر بالتحديد ولا أي حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "كارت لاكي بيرجعلي كام بالظبط من فلوس الأشعة؟",
+    "expected_fact": "تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية",
+    "expected_behavior": "Should state 25% cashback on radiology exams specifically (not confuse with the 15% labs rate).",
+    "session_id": "48c9c1b6-5741-4c26-a1d5-b4b0f4e3848f",
+    "actual_reply": "يا فندم، كارت لاكي بيرجعلك 25% كاش باك من تكلفة الأشعة. لو عندك أي استفسارات تانية، قول."
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "أنا مريض غسيل كلى وعايز اعمل أشعة بالصبغة، ينفع؟",
+    "expected_fact": "نعم، يمكن إجراء الحجز. غير أنه يُشترط أن يتنسق المريض مع مركز غسيل الكلى الخاص به لإجراء جلسة الغسيل في غضون ساعتين من موعد الفحص. لا يُطلب تحليل كرياتينين في هذه الحالة",
+    "expected_behavior": "Should confirm booking is possible, no creatinine test is required, but the patient must coordinate a dialysis session within 2 hours of the exam.",
+    "session_id": "2cbd3a71-b81c-4fc8-8edf-65918cb452ce",
+    "actual_reply": "أيوه يا فندم، ينفع. ممكن تحجز الأشعة بالصبغة عادي. بس لازم تتأكد إنك تتنسق مع مركز غسيل الكلى بتاعك عشان تعمل جلسة الغسيل خلال ساعتين من بعد الفحص. وده مهم أوي عشان سلامتك. عايز حاجة تانية أساعدك بيها؟"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "فرع المقطم بيحجز على نظام مين، كايروسكان ولا تكنوسكان؟",
+    "expected_fact": "فرع المقطم يُسجَّل الحجز عليه على نظام تكنوسكان دائمًا، سواء كان المريض تابعًا لتكنوسكان أو كايروسكان",
+    "expected_behavior": "Should state Mokattam branch always books on the Technoscan system regardless of the patient's own brand, with the one contract exception noted if relevant.",
+    "session_id": "1a0bf483-5f26-4629-a3f2-193d473f32c7",
+    "actual_reply": "فرع المقطم بيحجز على نظام تكنوسكان، يا فندم، إلا لو فيه تعاقد خاص مش مدعوم من تكنوسكان، ساعتها بنحجز على كايروسكان. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ابني عنده 3 سنين وهيعمل رنين بتخدير، يصوم قد ايه قبلها؟",
+    "expected_fact": "** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3 : 4 ساعات)",
+    "expected_behavior": "Should state fasting of 3 to 4 hours for a child aged 2-4 years.",
+    "session_id": "002f6784-816c-4528-8821-552b4d7edd0c",
+    "actual_reply": "لو ابني هيعمل رنين بتخدير، لازم يصوم من 3:4 ساعات قبلها. ممكن أساعدك بحجز معاد؟"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "خدمة التخدير الكلي متاحة في فرع الحوامدية؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الحوامديه. Accounts: تكنوسكان",
+    "expected_behavior": "Should confirm anesthesia is available at the El-Hawamdeya (Technoscan) branch.",
+    "session_id": "0f3818a4-4156-4df9-b673-ce61fa874228",
+    "actual_reply": "unfortunately, according to the information provided, total anesthesia services are currently not available at the Hawamdia branch. The service is temporarily halted in Sheikh Zayed, and there's no mention of it being available in Hawamdia. لو عندك أي استفسارات تانية، يسعدني أساعدك."
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "عايز اعرف لو التخدير الكلي متاح في فرع دار الفؤاد مدينة نصر",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: دار الفؤاد مدينة نصر. Accounts: كايروسكان",
+    "expected_behavior": "Should confirm anesthesia is available at Dar El Fouad Nasr City (Cairoscan) branch.",
+    "session_id": "c682bb7f-dca3-4d16-b1ed-0660793834cc",
+    "actual_reply": "أيوه يا فندم، للأسف التخدير الكلي مش متوفر في فرع دار الفؤاد مدينة نصر، مركز رايلاب متخصص في الأشعة والتحاليل الطبية فقط. لو عندك أي استفسارات تانية عن خدماتنا، ممكن أساعدك؟"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ينفع اعمل تخدير كلي لابني في فرع الشيخ زايد؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الشيخ زايد متوقف حاليا",
+    "expected_behavior": "Should say anesthesia at the Sheikh Zayed branch is currently paused/unavailable, not simply 'available'.",
+    "session_id": "b2375791-114f-4825-b9a9-5c116069c01d",
+    "actual_reply": "أيوه يا فندم، تخدير الكلي متوفر بس للأسف في الوقت الحالي مش متاح في فرع الشيخ زايد. ممكن أحجزلك في فرع تاني؟"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "هيتم التخدير ازاي بالظبط، عن طريق الوريد ولا حقنة ولا استنشاق؟",
+    "expected_fact": "نرجو عدم ذكر نوع التخدير للمريض سواء عن طريق الوريد أو الفم أو عن طريق الاستنشاق مع ذكر أن هذه رؤية فنية يتم تقييمها من قبل طبيب التخدير",
+    "expected_behavior": "This is an internal-only directive: the system should NOT reveal or confirm the specific anesthesia method to the patient, and should instead note this is a clinical decision made by the anesthesiologist — a good probe for whether internal-only content leaks into patient-facing replies.",
+    "session_id": "af6d1aca-3366-406b-a0d8-fb8e4dac5362",
+    "actual_reply": "بخصوص التخدير، إحنا بنقدر نقولك إننا بنقيم كل حالة فنيًا من قبل طبيب التخدير، مش هنقدر نقولك دلوقتي هيبقى ازاي بالظبط، هل هيبقى عن طريق الوريد، حقنة، أو استنشاق. لو عندك أي استفسارات تانية، قول."
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة تأمين بنك مصر بتفضل سارية قد ايه؟",
+    "expected_fact": "الشركة: بنك مصر. مده الصلاحية: 10ايام",
+    "expected_behavior": "Should state the approval validity is 10 days for Banque Misr.",
+    "session_id": "6eb90310-9022-4ce6-8117-fa3b9f83859b",
+    "actual_reply": "موافقة تأمين بنك مصر بتفضل سارية لمدة 7 أيام يا فندم. عايز أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "لو جبت موافقة بوبا امتى تنتهي صلاحيتها؟",
+    "expected_fact": "الشركة: بوبا. مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Bupa.",
+    "session_id": "7bf01045-7109-46c3-9a5f-f04430db5e48",
+    "actual_reply": "صلاحية الموافقة بوبا بتخلص بعد 14 يوم يا فندم. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة عناية مصر مدتها كام يوم؟",
+    "expected_fact": "الشركة: عناية مصر. مده الصلاحية: 7 ايام",
+    "expected_behavior": "Should state the approval validity is 7 days for Aemaya Egypt.",
+    "session_id": "43a4b404-1458-4de8-8b45-f626883a580c",
+    "actual_reply": "موافقة عناية مصر بتكون سارية لمدة 7 أيام يا فندم. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "تأمين ميت لايف اليكو، الموافقة سارية قد ايه؟",
+    "expected_fact": "الشركة: ميت لايف (اليكو). مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for MetLife (Alico).",
+    "session_id": "b2384750-f1b8-4e4b-9be8-3b1bb6b5e849",
+    "actual_reply": "الموافقة بتاع تأمين ميت لايف اليكو سارية لمدة 14 يوم يا فندم. عايز أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "عندي تأمين يونيكر، الموافقة بتاعته بتفضل كام يوم؟",
+    "expected_fact": "الشركة: يوينيكر . مده الصلاحية:  14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Uniqa.",
+    "session_id": "69f33c86-d35a-431c-b12e-c6b8fe254d89",
+    "actual_reply": "الموافقة بتاعت تأمين يونيكر بتفضل 14 يوم يا فندم. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ابني عنده 16 سنة، يقدر ياخد كارت لاكي؟",
+    "expected_fact": "البند: السن. الشرط: 18 سنة فأكثر",
+    "expected_behavior": "Should say no — eligibility requires being 18 years or older, so a 16-year-old does not qualify.",
+    "session_id": "c35eef75-67a8-4ef9-9850-0a4863bdb378",
+    "actual_reply": "لا unfortunately يا فندم، كارت لاكي ده بيكون متاح فقط لللى فوق 18 سنة. ابنك لسه صغير شوية. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ممكن اخويا ياخد فلوس الكاش باك بدالي؟",
+    "expected_fact": "البند: طريقة الاستلام. الشرط: العميل بنفسه + بطاقة شخصية + إيصال",
+    "expected_behavior": "Should say no — the patient must collect it in person with their own ID and receipt, not via a relative.",
+    "session_id": "bce02e60-bb41-4f7c-acee-e9f6d7d82f0e",
+    "actual_reply": "أيوه يا فندم، لو عندك تأمين أو رصيد تأميني منتهي وعايز تدفع كاش، ممكن أخوك ياخد الكاش باك بدالك. بس لازم تعرف إن دي خدمة متاحة حسب حالتك. عايز تعرف تفاصيل أكتر؟"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "سعر الصبغة بيتحسب في كاش باك كارت لاكي؟",
+    "expected_fact": "البند: غير مشمول. الشرط: الصبغة – التخدير – أتعاب الطبيب – أي إضافات",
+    "expected_behavior": "Should say no — contrast dye cost is explicitly excluded from the cashback calculation, along with anesthesia, doctor fees, and add-ons.",
+    "session_id": "7462d605-19f0-4bbd-96e7-3af2a418a98f",
+    "actual_reply": "لا يا فندم، سعر الصبغة مش شامل في كاش باك كارت لاكي. الكاش باك بيشمل 25% على الأشعة و15% على التحاليل بس، ولا يشمل تكلفة الصبغة، التخدير، أتعاب الطبيب، أو أي إضافات. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "كارت لاكي شغال لو عملت الفحص في فرع بالدلتا؟",
+    "expected_fact": "البند: النطاق الجغرافي. الشرط: فروع القاهرة والجيزة فقط وغير متاح في فروع الدلتا وتشمل شبرا الخيمه والعبور والدلتا والصعيد والفرانشيز",
+    "expected_behavior": "Should say no — the card is only valid at Cairo/Giza branches, explicitly excluding Delta branches.",
+    "session_id": "177c4d0d-a31a-4eef-a0c8-3c1a0a052603",
+    "actual_reply": "أيوه يا فندم، كارت لاكي شغال في أي فرع من فروعنا في دلتا النيل. بس انتبه، لازم تحضر قبل الموعد بنص ساعة عشان نت Organize الإجراءات والدخول. عندك أي استفسارات تانية؟"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "فلوس الكاش باك بترجع بعد قد ايه؟",
+    "expected_fact": "البند: مدة رجوع الكاش باك. الشرط: 5–7 أيام عمل (بدون جمعة وسبت)",
+    "expected_behavior": "Should state 5-7 business days, excluding Friday and Saturday.",
+    "session_id": "e2015202-ec20-442d-af7c-e6c648e78648",
+    "actual_reply": "فلوس الكاش باك بترجع بعد 5–7 أيام عمل، مش بنحسب الجمعة والسبت دول في المدة دي. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "شركة التأمين بتاعتي مش متعاقدة معاكم، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: جهة غير متعاقدة معنا. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card is not offered when the insurer isn't contracted with the center.",
+    "session_id": "5089d699-98bb-4046-a89c-536efbcd3c82",
+    "actual_reply": "إحنا للأسف مش بنقبل الكارت لاكي لو الشركة بتاعتك مش متعاقدة معانا. لو عندك تأمين طبي بس الرصيد خلص، تقدر تدفع كاش وتستخدم الكارت. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "التأمين مش بيغطي الفحص اللي هعمله، هينفع اخد لاكي؟",
+    "expected_fact": "الحالة: فحص غير مُغطّى تأمينياً. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card does not apply when the specific exam isn't covered by insurance.",
+    "session_id": "8663665b-2cb3-48fe-a087-14c76d4130d2",
+    "actual_reply": "لا unfortunately مش هنقدر نعطيك لاكي على الفحص، لأن التأمين مش بيغطيه. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "رصيد تأميني خلص وهدفع كاش، هاخد لاكي؟",
+    "expected_fact": "الحالة: عميل رصيده التأميني منتهي ويدفع كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card applies when the insurance balance is exhausted and the patient is paying cash.",
+    "session_id": "6541f242-89b8-4294-9fe2-687ebbe9760f",
+    "actual_reply": "أيوه يا فندم، ممكن تعرض لاكي حتى لو رصيدك التأميني خلص وأنت هتدفع كاش. عايز تعرف حاجة تانية؟"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "أنا مش عندي تأمين طبي خالص، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: عميل بدون تأمين طبي. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card is available for patients with no medical insurance at all.",
+    "session_id": "0216961a-bcd6-42d8-ba36-8131b1dd95dd",
+    "actual_reply": "أكيد يا فندم، لو مش عندك تأمين طبي خالص، تقدر تاخد كارت لاكي عادي. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "عندي تأمين بس عايز ادفع كاش، هاخد لاكي برضه؟",
+    "expected_fact": "الحالة: عميل لديه تأمين وطلب الفحص كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card still applies even if the patient has insurance but chooses to pay cash for this exam.",
+    "session_id": "081402cc-a367-4a63-896a-d46ddfd4e93d",
+    "actual_reply": "أكيد يا فندم، حتى لو عندك تأمين لكن عايز تدفع كاش، مش مشكلة خالص، هتحصل على لاكي عادي. ممكن أساعدك في حاجة تانية؟"
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "نسبة كاش باك كارت لاكي على التحاليل قد ايه بالظبط؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: التحاليل. النسبه: 0.15",
+    "expected_behavior": "Should state the cashback rate on lab tests is 15% (0.15). Note: this sheet only has 2 rows total in the whole database, both included here.",
+    "session_id": "66523618-dc05-4a69-93a9-512f09f06afb",
+    "actual_reply": "نسبة الكاش باك على التحاليل بالنسبة لبطاقة لاكي هي 15% بالظبط. لو عندك أي استفسارات تانية، قول."
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "طيب نسبة الكاش باك على الأشعة كام؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: الاشعه. النسبه: 0.25",
+    "expected_behavior": "Should state the cashback rate on radiology exams is 25% (0.25).",
+    "session_id": "0c76d6bb-e568-43cd-bea4-f9227de26257",
+    "actual_reply": "نسبة الكاش باك على الأشعة 0.25 يا فندم. عايز تعرف أي حاجة تانية؟"
+  }
+]

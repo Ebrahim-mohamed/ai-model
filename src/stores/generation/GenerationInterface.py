@@ -1,6 +1,20 @@
 from abc import ABC, abstractmethod
 
 
+class GenerationTimeoutError(Exception):
+    """Raised by a provider's generate_reply() when the underlying HTTP
+    call to the model endpoint times out — a vendor-agnostic signal
+    callers can catch without depending on `requests` (or any other HTTP
+    client a future provider might use) leaking past the adapter
+    boundary (claude.md §1.2). classify_intent() does NOT raise this: its
+    own documented contract is to never raise at all, translating a
+    timeout into 'unclassified' internally, the same as any other
+    unparseable response — only generate_reply()'s failure needs to
+    reach the caller, since only TextReplyController (not a provider)
+    should decide what patient-facing text to show when generation
+    itself is unavailable."""
+
+
 class GenerationInterface(ABC):
     """Port every conversational-model adapter (QwenProvider today, a
     future alternative candidate tomorrow) must implement. Section 3
@@ -20,7 +34,11 @@ class GenerationInterface(ABC):
         """Chat-completion call. `messages` follows the standard
         {"role": "system"|"user"|"assistant", "content": str} shape.
         Returns the assistant's text content only — callers never see
-        the raw provider response envelope."""
+        the raw provider response envelope.
+
+        Raises GenerationTimeoutError if the underlying HTTP call times
+        out — never swallowed here, since only the caller (not a vendor
+        adapter) should decide what patient-facing fallback text to show."""
         pass
 
     @abstractmethod

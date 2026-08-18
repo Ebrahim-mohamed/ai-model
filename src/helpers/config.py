@@ -83,11 +83,15 @@ class Settings(BaseSettings):
     # wherever that endpoint is actually served (a local vLLM instance, a
     # rented GPU box) — the app code never knows or cares which, only that
     # the URL is reachable (claude.md §6.3 Ports & Adapters).
-    GENERATION_BACKEND_LITERAL: List[str] = ["QWEN2_5_7B_INSTRUCT"]
-    GENERATION_BACKEND: str = "QWEN2_5_7B_INSTRUCT"
+    # models => nile-chat-12b, falcon-h1-34b
+    GENERATION_BACKEND_LITERAL: List[str] = ["nile-chat-12b"]
+    GENERATION_BACKEND: str = "nile-chat-12b"
     GENERATION_BASE_URL: str
-    GENERATION_MODEL_NAME: str = "qwen25"
-    GENERATION_REQUEST_TIMEOUT_SECONDS: int = 30
+    GENERATION_MODEL_NAME: str = "nile-chat-12b"
+    # Raised 30 -> 120 during Phase 0's bake-off (see README/.env.example)
+    # — real traffic against a --enforce-eager, tunneled 34B candidate
+    # showed 5/67 turns exceeding 30s purely on inference latency.
+    GENERATION_REQUEST_TIMEOUT_SECONDS: int = 120
 
     # Section 3 Step 1 — Tier 1 (Redis) of the two-tier chat-history
     # architecture: active session state (dialogue stage, collected slots,
@@ -97,6 +101,14 @@ class Settings(BaseSettings):
     SESSION_REDIS_URL: str
     SESSION_TTL_SECONDS: int = 86400
     SESSION_HISTORY_WINDOW: int = 20
+
+    # Step-by-step RAG pipeline tracing (breadth classification, field
+    # selection, final CONTEXT construction — see helpers/logging_config.py).
+    # RAG_LOG_LEVEL is deliberately env-driven rather than a code constant:
+    # flipping DEBUG on for a live debugging session, or back to INFO for
+    # normal operation, should never require a redeploy.
+    RAG_LOG_FILE_PATH: str = "rag_execution.log"
+    RAG_LOG_LEVEL: str = "INFO"
 
     class Config:
         env_file = ".env"
