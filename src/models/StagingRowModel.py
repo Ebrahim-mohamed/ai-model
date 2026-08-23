@@ -58,6 +58,23 @@ class StagingRowModel(BaseDataModel):
             await session.commit()
         return result.rowcount
 
+    async def get_distinct_source_files(self, client_id: str) -> list[str]:
+        """Every distinct source_file currently represented in
+        staging_rows for this client — the staging-table counterpart of
+        ChunkModel.get_distinct_source_files, used for the same full-mirror
+        stale-file diff (tasks/onedrive_sync.py)."""
+        async with self.db_client() as session:
+            stmt = (
+                select(StagingRow.source_file)
+                .where(
+                    StagingRow.client_id == client_id,
+                    StagingRow.source_file.isnot(None),
+                )
+                .distinct()
+            )
+            result = await session.execute(stmt)
+            return [row[0] for row in result.all()]
+
     async def get_total_rows_count(self, client_id: str) -> int:
         async with self.db_client() as session:
             stmt = select(func.count(StagingRow.id)).where(StagingRow.client_id == client_id)

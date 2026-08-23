@@ -70,12 +70,22 @@ class ClientConfig(SQLAlchemyBase):
     whatsapp_min_relevance_score = Column(Float, nullable=False, server_default="0.35")
 
     # How many fields FieldSelectionController may hand the LLM for a
-    # narrow query. Default 2, not 1: most narrow questions resolve to a
-    # single field ("فيه أسانسير؟"), but compound ones legitimately need
-    # two ("فيه أسانسير وكرسي متحرك؟") — capped low deliberately, since
-    # the whole point is narrowing away from "all 15 fields," not
-    # re-approaching it.
-    whatsapp_field_selection_max_fields = Column(Integer, nullable=False, server_default="2")
+    # narrow query. Lowered from 2 to 1 after the root-cause investigation
+    # into the 68.7%/73.1% golden-suite results: scripts/finetune_data/
+    # sampling.py's narrow_positive pass builds EVERY training/val example
+    # as a single "label: value" line by construction (see its own
+    # docstring — compound 2-field narrow questions were an explicit,
+    # disclosed scope simplification, never actually generated), so 2 was
+    # already handing the model a shape it was never trained on for the
+    # ordinary single-fact case, not just the compound one. Verified in a
+    # real failing case (elevator-availability query): the model saw 2
+    # fields (elevator status + branch address) where training only ever
+    # showed 1. 1 exactly matches the training distribution for the
+    # majority (single-fact) narrow case, at the disclosed cost of
+    # compound narrow questions ("فيه أسانسير وكرسي متحرك؟") now reliably
+    # getting only their top-ranked field — no regression there, since
+    # that shape was already outside the training distribution either way.
+    whatsapp_field_selection_max_fields = Column(Integer, nullable=False, server_default="1")
 
     # Deterministic breadth classification — replaces the LLM-based
     # classify_intent(["narrow","broad"]) call, which real traffic proved

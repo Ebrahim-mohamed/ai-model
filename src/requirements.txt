@@ -42,3 +42,11 @@ openpyxl==3.1.5
 sentence-transformers==3.3.1
 torch==2.13.0
 numpy==2.1.3
+
+# Section 3 fine-tuning data prep (scripts/generate_finetuning_dataset.py)
+# — teacher-distillation calls against Claude via the official Anthropic
+# SDK. Not a src/ runtime dependency (nothing under src/ imports it); kept
+# here anyway since this is the project's one requirements.txt and the
+# script imports real src/ controllers, same precedent as the other
+# scripts/ admin CLIs.
+anthropic==0.69.0

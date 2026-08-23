@@ -47,8 +47,9 @@ class IntentRoutingController(BaseController):
         target = get_routing_target(intent)
 
         mode = None
+        debug_json = None
         if target == RoutingTarget.TEXT_PIPELINE.value:
-            reply_text, mode = await self.text_reply_controller.reply(client_id, text, session_state)
+            reply_text, mode, debug_json = await self.text_reply_controller.reply(client_id, text, session_state)
             routing_outcome = RoutingOutcome.AI_HANDLED
         else:
             # Steps 2/5 (complaints, booking) aren't built yet — routed
@@ -79,4 +80,4 @@ class IntentRoutingController(BaseController):
             routing_outcome=routing_outcome,
         )
 
-        return {"reply": reply_text, "intent": intent, "mode": mode}
+        return {"reply": reply_text, "intent": intent, "mode": mode, "debug_json": debug_json}

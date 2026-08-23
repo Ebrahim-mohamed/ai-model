@@ -34,4 +34,5 @@ async def chat(body: ChatRequest, request: Request, x_admin_api_key: str = Heade
         reply=result["reply"],
         intent=result["intent"],
         mode=result["mode"],
+        debug_json=result["debug_json"],
     )

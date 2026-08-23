@@ -4,10 +4,37 @@ import logging
 import re
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from ..GenerationInterface import GenerationInterface, GenerationTimeoutError
 
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+
+# Retries transport-level connection failures only — a reset/refused/dropped
+# connection to the Colab + cloudflared quick-tunnel this provider talks to
+# in practice. Real, recurring evidence: two golden-suite cases logged as
+# "[REQUEST FAILED: 500 Server Error...]" and a live traceback ending in
+# "ConnectionResetError: [Errno 104]" during the TLS handshake — a dropped
+# tunnel, not a slow-but-alive server (that's what the existing Timeout
+# handling below already covers, unretried, on purpose). status_forcelist
+# is deliberately left unset: an HTTP error status FROM vLLM itself is a
+# real answer from a live server, not a dropped connection, so it still
+# raises via response.raise_for_status() below, unretried. allowed_methods
+# explicitly includes POST — urllib3's own default excludes it (a
+# non-idempotent method, in case a prior attempt partially executed
+# server-side) — safe to override here specifically because
+# /v1/chat/completions is a stateless generation call with no server-side
+# side effects to double up. backoff_factor=0.5 keeps the 3 retries' total
+# added latency to a few seconds (0.5s/1s/2s), since a reset/refused
+# connection fails fast, not slow.
+_CONNECTION_RETRY = Retry(
+    total=3,
+    connect=3,
+    read=3,
+    backoff_factor=0.5,
+    allowed_methods=frozenset(["POST"]),
+)
 
 _JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}")
 
@@ -50,6 +77,14 @@ class NileChatProvider(GenerationInterface):
         self.model_name = model_name
         self.request_timeout_seconds = request_timeout_seconds
         self.logger = logging.getLogger(__name__)
+        # One Session per provider instance — this provider itself is a
+        # single, process-lifetime object (see main.py's startup_span), so
+        # the retry-mounted adapter and its connection pool are built once,
+        # not rebuilt on every request.
+        self._session = requests.Session()
+        adapter = HTTPAdapter(max_retries=_CONNECTION_RETRY)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def _post_chat_completion(
         self,
@@ -60,7 +95,7 @@ class NileChatProvider(GenerationInterface):
         repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
     ) -> str:
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.base_url}{CHAT_COMPLETIONS_PATH}",
                 json={
                     "model": self.model_name,
@@ -76,6 +111,21 @@ class NileChatProvider(GenerationInterface):
             raise GenerationTimeoutError(
                 f"NileChatProvider: request to {self.base_url}{CHAT_COMPLETIONS_PATH} "
                 f"timed out after {self.request_timeout_seconds}s"
+            ) from e
+        except requests.exceptions.ConnectionError as e:
+            # Reached only after _CONNECTION_RETRY's own 3 retries are
+            # already exhausted inside session.post() above — a transient
+            # reset/refused connection would have already succeeded on one
+            # of those retries. Reusing GenerationTimeoutError rather than
+            # a new exception type: the one existing caller
+            # (TextReplyController._mode_a_reply) already has a real,
+            # tested fallback path for it (GENERATION_UNAVAILABLE_FALLBACK)
+            # — from the patient's perspective, "the backend didn't
+            # respond" is the same outcome whether the cause was slow or
+            # reset, so it doesn't need a second, parallel fallback path.
+            raise GenerationTimeoutError(
+                f"NileChatProvider: connection to {self.base_url}{CHAT_COMPLETIONS_PATH} "
+                f"failed after retries ({e.__class__.__name__}: {e})"
             ) from e
         response.raise_for_status()
         payload = response.json()

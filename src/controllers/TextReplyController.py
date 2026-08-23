@@ -1,8 +1,19 @@
+import json
 import logging
+import re
 
 from .BaseController import BaseController
 from stores.llm.templates.template_parser import TemplateParser, TemplateBucket
 from stores.generation.GenerationInterface import GenerationTimeoutError
+
+# Matches the fenced ```json ... ``` block the fine-tuned "JSON-then-
+# phrasing" discipline trains the model to lead every Mode A reply with
+# (see scripts/finetune_data/teacher.py's own GENERATE_QUESTION_TASK
+# contract, which this production shape mirrors). Same extraction
+# pattern NileChatProvider.classify_intent already uses for its own
+# {"intent": ...} block — kept consistent rather than inventing a
+# second regex convention for the same kind of problem in this codebase.
+_JSON_BLOCK_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 # Deliberately NOT a Bucket B template: prompt_templates.py's own header
 # requires every entry there to be a verbatim transcription of real
@@ -18,6 +29,54 @@ from stores.generation.GenerationInterface import GenerationTimeoutError
 GENERATION_UNAVAILABLE_FALLBACK = (
     "معذرة، في تأخير مؤقت في الرد دلوقتي. ممكن تجرب تاني بعد شوية؟"
 )
+
+
+def _split_json_and_phrasing(raw_output: str) -> tuple[object | None, str]:
+    """Splits a Mode A generation's raw text into (parsed_json_block,
+    phrasing) — the same two-part shape every training example in
+    finetune_data_out/train.json was built around. Returns
+    (parsed_json_or_None, phrasing_text), never raises: this is a
+    best-effort split over live model output, not a validation gate —
+    grounding/correctness checking is a separate, not-yet-built concern
+    (the JSON block is kept by the caller specifically so a later
+    process can reuse grounding_gate.py's own logic against it if
+    that's wanted).
+
+    Three real cases, in the order a caller should reason about them:
+
+    1. Fenced JSON block present, parses, non-empty text follows it —
+       the normal, trained-for case. Returned as-is.
+    2. No fenced JSON block at all — NOT an error. This is what a
+       plain-text reply looks like (today's pre-fine-tune baseline
+       behavior, and also what whatsapp_out_of_domain_directive's decline
+       path will keep producing indefinitely, since that directive was
+       never part of this fine-tuning dataset — the JSON-then-phrasing
+       shape is Mode A's grounded-reply directive only). The full raw
+       text is returned as the phrasing so nothing is lost.
+    3. A fenced block is present but doesn't parse, OR parses but
+       nothing usable follows it (the exact truncation shape
+       scripts/finetune_data/teacher.py's TeacherCallResult.truncated()
+       was built to catch during data generation — a syntactically
+       complete JSON block whose trailing phrasing got cut off by
+       max_tokens). Production has no stop_reason to check the way the
+       offline teacher pipeline does, so this is detected structurally
+       instead: if there's real text sitting after the fence, salvage it
+       as the phrasing even though the JSON itself didn't parse; if
+       there's genuinely nothing usable, the caller falls back to
+       GENERATION_UNAVAILABLE_FALLBACK rather than showing a patient an
+       empty or JSON-fragment reply."""
+    match = _JSON_BLOCK_RE.search(raw_output)
+    if not match:
+        return None, raw_output.strip()
+
+    phrasing = raw_output[match.end():].strip()
+
+    try:
+        parsed = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None, phrasing
+
+    return parsed, phrasing
 
 
 class TextReplyController(BaseController):
@@ -77,6 +136,21 @@ class TextReplyController(BaseController):
     is additive and never regresses a chunk that hasn't been re-synced
     yet.
 
+    JSON-then-phrasing output: the Section 3 Step 1 fine-tuning dataset
+    (scripts/finetune_data_out/) trains the model to reason in a fenced
+    ```json block first, then phrase the patient-facing reply from only
+    what that JSON contains — the same anti-hallucination discipline
+    Stage 5's grounding gate enforces on the training data itself, now
+    asked of the live model at inference time. _mode_a_reply splits the
+    two apart (_split_json_and_phrasing) and returns ONLY the phrasing —
+    the JSON never reaches the patient, it's logged for internal
+    visibility only. This is deliberately tolerant, not a strict
+    contract: a reply with no JSON block at all (today's pre-fine-tune
+    baseline, and whatsapp_out_of_domain_directive's decline path, which
+    this dataset never covers) is treated as ordinary plain-text output,
+    not an error — see the helper's own docstring for the full case
+    breakdown.
+
     A later round also tried a strict "review every affirmation/negation
     word-by-word against CONTEXT" instruction plus isolated single-word
     ❌/✅ examples (e.g. a bare 'إزاي') in that same directive, paired with
@@ -108,19 +182,32 @@ class TextReplyController(BaseController):
         self.template_parser = TemplateParser()
         self.logger = logging.getLogger(__name__)
 
-    async def reply(self, client_id: str, text: str, session_state: dict) -> tuple[str, str]:
-        """Returns (reply_text, mode) — mode is "mode_a" or "mode_b",
-        surfaced for logging/Postman verification, never used by the
-        caller to branch (the decision already happened here)."""
+    async def reply(self, client_id: str, text: str, session_state: dict) -> tuple[str, str, object | None]:
+        """Returns (reply_text, mode, debug_json) — mode is "mode_a" or
+        "mode_b", surfaced for logging/Postman verification, never used
+        by the caller to branch (the decision already happened here).
+
+        debug_json is the fine-tuned model's own extracted JSON block
+        (see _split_json_and_phrasing) for Mode A turns that produced
+        one, always None otherwise — Mode B is verbatim template
+        substitution with no model call at all, and Mode A's zero-chunk
+        out-of-domain decline was never part of this fine-tuning dataset
+        so it stays plain text. Never shown to the patient (routes/
+        schemes/whatsapp.py surfaces it as its own ChatResponse.debug_json
+        field, entirely separate from `reply`) — it exists purely for
+        internal tooling (scripts/collect_golden_responses.py's grounding
+        check) to compare the model's own extracted facts against a golden
+        case's expected_fact without having to re-parse `reply` itself."""
         dialogue_state = session_state.get("dialogue_state")
         if dialogue_state:
             mapping = await self.dialogue_state_template_map_model.get_template_for_state(client_id, dialogue_state)
             if mapping is not None:
                 bucket = TemplateBucket.B if mapping.bucket == "B" else TemplateBucket.C
                 substitutions = self._mode_b_substitutions(session_state)
-                return self.template_parser.resolve(bucket, mapping.template_id, **substitutions), "mode_b"
+                return self.template_parser.resolve(bucket, mapping.template_id, **substitutions), "mode_b", None
 
-        return await self._mode_a_reply(client_id, text, session_state), "mode_a"
+        reply_text, json_block = await self._mode_a_reply(client_id, text, session_state)
+        return reply_text, "mode_a", json_block
 
     def _mode_b_substitutions(self, session_state: dict) -> dict:
         """Real, sensible values for the placeholders the call-script-derived
@@ -225,7 +312,12 @@ class TextReplyController(BaseController):
         )
         return decision
 
-    async def _mode_a_reply(self, client_id: str, text: str, session_state: dict) -> str:
+    async def _mode_a_reply(self, client_id: str, text: str, session_state: dict) -> tuple[str, object | None]:
+        """Returns (phrasing, json_block) — see reply()'s own docstring
+        for what json_block is and who consumes it. json_block is always
+        None on the two fallback paths below (a timeout or an unusable
+        generation has no JSON to report) and on the out-of-domain decline
+        path (never part of this fine-tuning dataset)."""
         history = session_state.get("history", [])
         client_config = await self.client_config_model.get_client_config(client_id)
 
@@ -350,24 +442,45 @@ class TextReplyController(BaseController):
                 {"role": "user", "content": "\n\n".join(user_sections)},
             ]
 
-            # Breadth-aware budget: a narrow, 1-2-sentence answer (Rule 1)
-            # needs far less room than a broad multi-chunk summary (Rule
-            # 5) — and real test traffic showed the model's failures
-            # (fabricated add-ons, language drift) consistently landing in
-            # the *unused tail* of an overly generous fixed budget, past
-            # where a correct answer had already finished.
-            max_tokens = 250 if breadth == "broad" else 100
+            # Breadth-aware budget — raised from 250/100 after the
+            # post-fine-tune golden-suite grading (68.7% run) found ~11/67
+            # replies truncated mid-sentence, including 4 where the cutoff
+            # landed inside the JSON reasoning block itself and leaked raw,
+            # unparseable JSON to the patient. The old budgets were sized
+            # around the *training* target-length distribution (max ~230
+            # tokens for the longest broad_positive examples), but real
+            # production CONTEXT/debug_json shapes run longer than that
+            # training sample — narrow turns got cut too (e.g. a single
+            # branch-name field mid-word), not just broad ones. 1024/2048
+            # give real headroom past every truncation case observed in
+            # that grading pass; the model still stops naturally at
+            # NILE_CHAT_STOP_SEQUENCES well before either ceiling on a
+            # normal-length reply, so this is a ceiling raise, not a
+            # verbosity change.
+            max_tokens = 2048 if breadth == "broad" else 1024
 
         # temperature history on this call: 0.1 (too greedy — got stuck in
         # loops when combined with repetition_penalty=1.1, since reverted),
         # then 0.2 (fixed that, but loosened things enough that the model
         # started hallucinating numbers/timestamps instead of copying them
-        # from CONTEXT). 0.15 splits the difference — close enough to
-        # deterministic for a grounded extraction task to keep numeric
-        # fidelity, with enough margin to not re-trigger the 0.1 lockup
-        # now that a (much smaller) repetition_penalty is back too.
+        # from CONTEXT), then 0.15 as the split-the-difference value.
+        # Lowered to 0.0 (greedy decoding) after repeated golden-suite runs
+        # at 0.15 kept landing on the same ~80.6% accuracy with a
+        # DIFFERENT failure mix each time (over-caution vs. hallucination
+        # counts shuffling run to run, same overall total) — real evidence
+        # that a meaningful share of the remaining gap was sampling noise,
+        # not a stable, fixable pattern. 0.0 removes that noise from
+        # evaluation so a future prompt/code change's real effect is
+        # visible in one run instead of needing several averaged together.
+        # Real, disclosed risk carried over from the 0.1 history above:
+        # greedy decoding is generally MORE prone to repetition loops than
+        # mild sampling, since there's no random escape once the model
+        # locks onto a repeating path — watch new golden-suite output for
+        # that exact symptom (a phrase or clause repeated verbatim within
+        # one reply) before trusting this as a durable production value,
+        # not just an eval-time one.
         try:
-            return await self.generation_client.generate_reply(messages, temperature=0.15, max_tokens=max_tokens)
+            raw_output = await self.generation_client.generate_reply(messages, temperature=0.0, max_tokens=max_tokens)
         except GenerationTimeoutError as e:
             # Root-caused against real Falcon-H1 golden-suite traffic
             # (Phase 0 bake-off): a slow/eager-mode remote deployment can
@@ -375,4 +488,50 @@ class TextReplyController(BaseController):
             # call site allowed to return non-Bucket-B, non-model text —
             # see GENERATION_UNAVAILABLE_FALLBACK's own comment for why.
             self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
-            return GENERATION_UNAVAILABLE_FALLBACK
+            return GENERATION_UNAVAILABLE_FALLBACK, None
+
+        # The fine-tuned model reasons in JSON first, then phrases the
+        # patient-facing reply from only what that JSON contains — see
+        # _split_json_and_phrasing's own docstring for the three real
+        # cases this covers. The JSON half is never shown to the patient;
+        # it's kept here purely for internal logging (and, later, a
+        # grounding check against context_block if one gets built —
+        # not attempted here).
+        json_block, phrasing = _split_json_and_phrasing(raw_output)
+
+        if json_block is not None:
+            # DEBUG, matching this method's existing convention for real
+            # patient-adjacent business content (see the [context] logs
+            # above) — opt-in verbosity, not logged by default.
+            self.logger.debug(f"[mode_a_json] query={text!r} json_block={json_block!r}")
+        else:
+            # INFO, not a warning: a missing JSON block is the expected,
+            # unremarkable shape for whatsapp_out_of_domain_directive's
+            # decline path (never part of this fine-tuning dataset) and
+            # for any turn still served by a not-yet-fine-tuned model —
+            # a real signal worth having on hand for rollout monitoring,
+            # but not itself evidence of a problem.
+            self.logger.info(f"[mode_a_json] query={text!r} no JSON block found — treating full output as phrasing")
+
+        if not phrasing:
+            # A JSON block was found and parsed, but nothing usable
+            # followed it — the live-inference shape of the truncation
+            # failure scripts/finetune_data/teacher.py's
+            # TeacherCallResult.truncated() was built to catch during
+            # data generation. Never show a patient an empty reply or a
+            # bare JSON fragment; fall back exactly like a generation
+            # timeout does.
+            self.logger.warning(
+                f"Mode A: generation for {text!r} produced no usable phrasing after JSON "
+                f"extraction (raw_output={raw_output!r}) — returning fallback reply"
+            )
+            # json_block itself may still be a validly-parsed dict/list
+            # here (only the phrasing half was unusable) — deliberately
+            # NOT surfaced as debug_json in this branch: the patient is
+            # getting GENERATION_UNAVAILABLE_FALLBACK, not the model's
+            # real answer, so pairing that fallback text with a real
+            # extracted JSON block would misrepresent what was actually
+            # shown for this turn.
+            return GENERATION_UNAVAILABLE_FALLBACK, None
+
+        return phrasing, json_block

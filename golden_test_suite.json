@@ -14,8 +14,8 @@
   {
     "sheet_name": "Branch Directory",
     "patient_query": "لو حصل طارئ وأنا في فرع حلوان، فيه عربية إسعاف موجودة؟",
-    "expected_fact": "معلومات الفرع الإسعاف: غير متاح",
-    "expected_behavior": "Should clearly state ambulance service is NOT available at the Helwan branch — must not invert this negative fact."
+    "expected_fact": "معلومات الفرع الإسعاف: متاح",
+    "expected_behavior": "Should clearly state ambulance service IS available at the Helwan branch — the source data changed since this case was last verified (previously unavailable, now available); must not invert this now-positive fact."
   },
   {
     "sheet_name": "Branch Directory",
@@ -50,8 +50,8 @@
   {
     "sheet_name": "Examinations",
     "patient_query": "عايز اعمل مسح ذري على القنوات المرارية Hida Scan، هو محتاج استعداد ايه وفين موجود؟",
-    "expected_fact": "تـحـضـيـرات الـفـحـص: صيام قبل الفحص ب 6 ساعات ... الـفروع Branches: المهندسين فقط",
-    "expected_behavior": "Should state 6-hour fasting is required and the exam is only available at the Mohandessin branch."
+    "expected_fact": "تـحـضـيـرات الـفـحـص: صيام قبل الفحص ب 6 ساعات ... الـفروع Branches: المهندسين فقط ... مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: متوقفه حاليا",
+    "expected_behavior": "Should state 6-hour fasting is required, the exam is only available at the Mohandessin branch, and flag that the exam is currently paused (متوقفه حاليا) — the source data added this caveat since this case was last verified; should not omit it."
   },
   {
     "sheet_name": "Examinations",

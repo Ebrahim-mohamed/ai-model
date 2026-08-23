@@ -1646,6 +1646,10 @@ operational how-to-run-and-verify-it record, matching every Step 1–9 section a
   mishandled by the text pipeline.
 - **`routes/whatsapp.py`** (`POST /api/whatsapp/chat`) + `routes/schemes/whatsapp.py` — the
   PoC-simulator text endpoint. Same admin-API-key → `client_id` resolution as `routes/retrieval.py`.
+  `ChatResponse` gained `debug_json` (optional, default `null`) — the fine-tuned Mode A model's own
+  extracted JSON block for that turn (see `TextReplyController.reply`'s docstring), always `null` for
+  Mode B, the out-of-domain decline path, or a not-yet-fine-tuned model. Internal/testing field only
+  (`scripts/collect_golden_responses.py`'s grounding check), never patient-facing.
 - **`RetrievalController.retrieve()`** gained an optional `top_k_override` parameter (additive,
   defaults to `None`) — Section 2's existing `/api/retrieve` endpoint is completely unaffected
   since it never passes it; only Mode A's query-breadth logic uses it.

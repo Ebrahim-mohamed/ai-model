@@ -1,0 +1,1942 @@
+[
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع بلبيس بيفتح لحد الساعة كام يوم الجمعة؟",
+    "expected_fact": "مواعيد الفروع يوم الجمعة: 1:00 pm to 11:00 pm",
+    "expected_behavior": "Should state Bilbeis branch's Friday hours as 1:00 PM to 11:00 PM, extracted from the real Branch Directory chunk.",
+    "session_id": "adc68349-0892-41fd-b405-d7adfadaf477",
+    "actual_reply": "معلومة مواعيد المعمل يوم الجمعة مش واضحة عندي يا فندم، تحب أحولك لزميل يتأكدها لك؟",
+    "debug_json": {
+      "مواعيد المعمل يوم الجمعة": "غير متاح"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "مواعيد الفروع يوم الجمعة",
+        "expected_value": "1:00 pm to 11:00 pm",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "هو فرع سليمان أباظة مناسب لو معايا حد بكرسي متحرك؟",
+    "expected_fact": "معلومات الفرع كرسي متحرك: متاح",
+    "expected_behavior": "Should confirm wheelchair access is available at Suleiman Abaza (Mohandessin 1) branch.",
+    "session_id": "754fe7e0-1e8b-461b-a738-ed127bc545e4",
+    "actual_reply": "معلومة إمكانية دخول الكرسي المتحرك في فرع سليمان أباظة مش متوفرة عندي هنا، فمش عايزة أقولك حاجة غير مؤكدة. هسيبك مع زميل من الموظفين يأكدلك المعلومة دي بالظبط، تحب أحولك له دلوقتي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "معلومات الفرع كرسي متحرك",
+        "expected_value": "متاح",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "لو حصل طارئ وأنا في فرع حلوان، فيه عربية إسعاف موجودة؟",
+    "expected_fact": "معلومات الفرع الإسعاف: متاح",
+    "expected_behavior": "Should clearly state ambulance service IS available at the Helwan branch — the source data changed since this case was last verified (previously unavailable, now available); must not invert this now-positive fact.",
+    "session_id": "976b9592-6d3d-472c-8f57-b4d64a51ffb3",
+    "actual_reply": "أيوه يا فندم، عربية الإسعاف متاحة في فرع حلوان، فمتقلقش خالص. تحب أحجزلك ميعاد في أقرب وقت؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "معلومات الفرع الإسعاف": "متاح"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "معلومات الفرع الإسعاف",
+        "expected_value": "متاح",
+        "actual_value": "متاح",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "فرع شبرا التوفيقية فيه اسانسير ولا لازم اطلع سلم؟",
+    "expected_fact": "معلومات الفرع اسانسير: غير متاح",
+    "expected_behavior": "Should state elevator is NOT available at Shoubra 2 (Toufikeya school) branch — a real negative-fact case, not a fabricated one.",
+    "session_id": "d3104b8c-9cf8-4e01-9ec8-72498e87a12d",
+    "actual_reply": "للأسف يا فندم الفرع مفيهوش أسانسير، يعني لازم تطلع السلم. تحب أشوفلك حاجة تانية بخصوص الفرع؟",
+    "debug_json": {
+      "معلومات الفرع اسانسير": "غير متاح"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "معلومات الفرع اسانسير",
+        "expected_value": "غير متاح",
+        "actual_value": "غير متاح",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Branch Directory",
+    "patient_query": "ممكن ادفع بالفاليو في فرع المهندسين بتاع تكنوسكان؟",
+    "expected_fact": "معلومات الفرع فاليو: متاح",
+    "expected_behavior": "Should confirm ValU installment payment IS available at the Technoscan Mohandessin branch — note most other branches sampled say ValU unavailable, so this is a genuine positive exception worth testing.",
+    "session_id": "4742dc11-30f8-405a-baa6-e3aeb5222a69",
+    "actual_reply": "أيوه يا فندم، الفاليو متاحة في فرع المهندسين، تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "معلومات الفرع فاليو": "متاح"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "معلومات الفرع فاليو",
+        "expected_value": "متاح",
+        "actual_value": "متاح",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "لو عايز اضيف رسم عصب بالإبرة على رسم العصب العادي، هياخد فلوس زياده؟",
+    "expected_fact": "اذا طلب العميل رسم عصب بالابرة يتم اضافة 500 جنية علي سعر الفحص واختيار خدمات اضافية خلال الحجز واختيار EMG Needle",
+    "expected_behavior": "Should state the needle EMG add-on costs an extra 500 EGP on top of the base exam price.",
+    "session_id": "5d159ed5-fd49-4c7b-88a7-82214ee9b55e",
+    "actual_reply": "بالنسبة لرسم العصب بالإبرة، المعلومة دي مش متوفرة عندي هنا، فمش هقدر أأكدلك حاجة من نفسي. الأفضل نتأكدلك منها من الموظف المختص يا فندم، تحب أحولك له دلوقتي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل ديناميكية تبول في فرع تكنوسكان، متاحة عندكم؟",
+    "expected_fact": "غير متاحه بتكنوسكان يتم التحويل لعيادات كايروسكان دار الفؤاد",
+    "expected_behavior": "Should say this exam is not available at Technoscan and the patient is transferred to Cairoscan's Dar El Fouad clinics.",
+    "session_id": "ad72d05d-95f4-4299-a0b9-6c5da05149f2",
+    "actual_reply": "معلومة إتاحة فحص الديناميكية التبول في فرع تكنوسكان مش متوفرة عندي هنا يا فندم، فمش هقدر أأكدلك حاجة من نفسي. تحب أحوّلك لزميل يتأكدلك منها ويطمنك؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "ممكن اعمل رسم قلب هولتر 72 ساعة في فرع كايروسكان؟",
+    "expected_fact": "غير متاحة كايرو سكان  يتم التحويل تكنو سكان",
+    "expected_behavior": "Should state the 72-hour Holter is not available under Cairoscan and the patient is referred to Technoscan.",
+    "session_id": "5094e187-6ff9-4b6c-96a2-cd724c16ae83",
+    "actual_reply": "معلومة رسم القلب هولتر 72 ساعة في فرع كايروسكان مش متوفرة عندي يا فندم، فمش هقدر أأكدلك حاجة من نفسي. تحب أحوّلك لزميل يتأكدلك منها ويطمنك؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل مسح ذري على القنوات المرارية Hida Scan، هو محتاج استعداد ايه وفين موجود؟",
+    "expected_fact": "تـحـضـيـرات الـفـحـص: صيام قبل الفحص ب 6 ساعات ... الـفروع Branches: المهندسين فقط ... مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: متوقفه حاليا",
+    "expected_behavior": "Should state 6-hour fasting is required, the exam is only available at the Mohandessin branch, and flag that the exam is currently paused (متوقفه حاليا) — the source data added this caveat since this case was last verified; should not omit it.",
+    "session_id": "14618a71-97ff-4e2e-946c-e54bf5a3be2c",
+    "actual_reply": "بالنسبة لمسح ذري على القنوات المرارية Hida Scan، التحضيرات إنك تصوم قبل الفحص ب 6 ساعات، ولازم تجيب معاك أي أشعة سابقة ليها علاقة بشكوى المريض، وكمان لازم تبعد عن الأطفال والحوامل لمدة 24 ساعة بعد عمل الأشعة. الفحص متاح في فرع المهندسين بس، والحجز بيتم عن طريق الرجوع لمسؤول الشيفت، وبيتم إحضار كل الحالات بنفس موعد القيد. تحب أحجزلك في فرع المهندسين؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "اســــم الــفـــحـــص": "مسح ذري على القنوات المرارية\nHida Scan",
+          "تـحـضـيـرات الـفـحـص": "صيام قبل الفحص ب 6 ساعات \n• احضار اي اشعه سابقه لها علاقه بشكوي المريض\n• البعد عن الاطفال والحوامل لمده 24 ساعه بعد عمل الاشعه ",
+          "الـفروع Branches": "المهندسين فقط",
+          "تـعـلـيـمـات الـحـجـز": "يتم الرجوع لمسؤل الشيفت \n•بيتم احضار جميع الحالات بنفس موعد القيد"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "FAIL",
+    "checked_pairs": [
+      {
+        "label": "تـحـضـيـرات الـفـحـص",
+        "expected_value": "صيام قبل الفحص ب 6 ساعات ..",
+        "actual_value": "صيام قبل الفحص ب 6 ساعات • احضار اي اشعه سابقه لها علاقه بشكوي المريض • البعد عن الاطفال والحوامل لمده 24 ساعه بعد عمل الاشعه",
+        "result": "value_mismatch"
+      },
+      {
+        "label": "الـفروع Branches",
+        "expected_value": "المهندسين فقط ..",
+        "actual_value": "المهندسين فقط",
+        "result": "value_mismatch"
+      },
+      {
+        "label": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم",
+        "expected_value": "متوقفه حاليا",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "at least one matched field reported a different value"
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "الماموجرام الديجيتال متاح في اي فرع، وهل تقدر حامل تعمله؟",
+    "expected_fact": "الـفروع Branches: شبرا1 فقط (حاليا متوقف). ... غير متاح ماموجرام للحوامل",
+    "expected_behavior": "Should state it's only offered at Shubra 1 (currently paused) and is not available for pregnant women — should not omit the 'currently paused' caveat.",
+    "session_id": "62e631c0-1865-4d1c-bb26-79d6b4a4cfbb",
+    "actual_reply": "الماموجرام الديجيتال مش متاح للحوامل خالص يا فندم، وكمان غير متاح للحوامل خالص. تحب أشوفلك فحص تاني تقدر تعمليه؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الـفروع Branches",
+        "expected_value": "شبرا1 فقط (حاليا متوقف)",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "عندي تأمين جولدن، لازم اجيب ايه معايا عشان اخد موافقة من الفرع؟",
+    "expected_fact": "يتم احضار اصل الكارنيه واصل الروشته لاحضار موافقه من خلال الفرع. إمكانية إحضار جواب التحويل من خلال الفرع: نعم",
+    "expected_behavior": "Should state the patient needs the original insurance card and original prescription, and confirm a transfer letter can be brought via the branch.",
+    "session_id": "f056e28b-d164-4ae7-88e5-aa51b3c757aa",
+    "actual_reply": "أيوه يا فندم، تقدر تجيب معاك جواب التحويل وتستخرج الموافقة من الفرع عادي. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "إمكانية إحضار جواب التحويل من خلال الفرع": "نعم"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "إمكانية إحضار جواب التحويل من خلال الفرع",
+        "expected_value": "نعم",
+        "actual_value": "نعم",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "انا عضو نادي المعادي الرياضي واليخت، تقدروا تجيبولي موافقة ولا الخصم بالكارنيه بس؟",
+    "expected_fact": "لا يتم  قبول او احضار موافقه خصم كارنيه فقط",
+    "expected_behavior": "Should clarify no prior-approval letter is accepted for this club — only a card-based discount.",
+    "session_id": "1327de56-92bf-42e9-9006-94f4ba40a697",
+    "actual_reply": "للأسف يا فندم مش بنستقبل موافقة، الخصم بيكون بالكارنيه بس. تحب أساعدك في حاجة تانية؟",
+    "debug_json": {
+      "إرشــادات الـتـــعـاقـــد": "لا يتم  قبول او احضار موافقه خصم كارنيه فقط"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "لو جبت موافقة من تأمين عناية مصر، هتفضل سارية قد ايه؟",
+    "expected_fact": "ملاحظات: مدة صلاحية الموافقة 7  ايام",
+    "expected_behavior": "Should state the approval stays valid for 7 days.",
+    "session_id": "702d6d5a-0cf7-425d-9c65-cca3682ac23f",
+    "actual_reply": "الموافقة بتاعة تأمين عناية مصر مدة صلاحيتها 7 ايام يا فندم، وتحب أحجزلك ميعاد خلالهم؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "إرشــادات الـتـــعـاقـــد": "يتم احضار اصل الكارنيه واصل الروشته لاحضار موافقه من خلال الفرع/ متاح احضار الموافقة من خلال قسم التعاقدات",
+          "ملاحظات": "مدة صلاحية الموافقة 7  ايام"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "ملاحظات",
+        "expected_value": "مدة صلاحية الموافقة 7  ايام",
+        "actual_value": "مدة صلاحية الموافقة 7 ايام",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "أنا شغال في شركة رشيد للبترول، ينفع اجيب جواب التحويل من الفرع؟",
+    "expected_fact": "إمكانية إحضار جواب التحويل من خلال الفرع: لا",
+    "expected_behavior": "Should say no, a transfer letter cannot be brought via the branch for this company.",
+    "session_id": "3a3706dc-d793-4b1e-8bf2-7d8b5a2a643b",
+    "actual_reply": "للأسف يا فندم مش بنقدر نوفرلك جواب التحويل من خلال الفرع، لازم تجيبه معاك. تحب أساعدك في حاجة تانية؟",
+    "debug_json": {
+      "إمكانية إحضار جواب التحويل من خلال الفرع": "لا"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "إمكانية إحضار جواب التحويل من خلال الفرع",
+        "expected_value": "لا",
+        "actual_value": "لا",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "Insurance Guide",
+    "patient_query": "جمعية سبيل الرشاد الخيرية متعاقدة مع كايروسكان؟",
+    "expected_fact": "مسمى التعاقد على سيستم كايروسكان: غير متعاقده. مسمى التعاقد على سيستم تكنوسكان: جمعيه سبيل الرشاد الخيريه",
+    "expected_behavior": "Should say NOT contracted under Cairoscan, but IS contracted under Technoscan — a brand-specific distinction that must not be flattened into a single yes/no.",
+    "session_id": "28b37104-12c8-43dd-bb39-851f1cb300f0",
+    "actual_reply": "للأسف يا فندم جمعية سبيل الرشاد الخيرية غير متعاقدة على سيستم كايروسكان، تحب أشوفلك حاجة تانية؟",
+    "debug_json": {
+      "مسمى التعاقد على سيستم كايروسكان": "غير متعاقده"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "مسمى التعاقد على سيستم كايروسكان",
+        "expected_value": "غير متعاقده",
+        "actual_value": "غير متعاقده",
+        "result": "match"
+      },
+      {
+        "label": "مسمى التعاقد على سيستم تكنوسكان",
+        "expected_value": "جمعيه سبيل الرشاد الخيريه",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مقطعية الأمعاء الأسبوع الجاي، عايز اعرف التحضيرات ابتدي امتى؟",
+    "expected_fact": "هذا الفحص يتطلب تحضيرًا يبدأ قبل الموعد بـ 72 ساعة (3 أيام)",
+    "expected_behavior": "Should state prep begins 72 hours (3 days) before the CT Enterography appointment, and can summarize the key steps without inventing extra ones.",
+    "session_id": "ca3129da-626c-4100-811d-655c0421c927",
+    "actual_reply": "معلومة بداية التحضيرات مش متوفرة عندي هنا يا فندم، الأفضل نتأكدها من الفرع مباشرة. تحب أحولك لزميل يأكدلك التفاصيل دي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "وزني حوالي 130 كيلو، أقدر اعمل مقطعية شرايين القلب؟",
+    "expected_fact": "⚠️ تنبيه هام عند الحجز: لا يُجرى هذا الفحص للمرضى الذين يتجاوز وزنهم 120 كيلوجرامًا",
+    "expected_behavior": "Should clearly say this exam is not performed for patients over 120kg, so at 130kg the patient does not qualify — must not soften or omit this.",
+    "session_id": "fedea456-68b7-405a-89e5-dc2a2c99f293",
+    "actual_reply": "[REQUEST FAILED: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/whatsapp/chat]",
+    "debug_json": null,
+    "verdict": "NEEDS_REVIEW",
+    "verdict_reason": "request failed — no reply to grade",
+    "checked_pairs": []
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "الرنين بالصبغة محتاج مني اصوم قبله؟",
+    "expected_fact": "يتم عمل تحليل Creatinine لا يتعدا 14 يوم  لا يحتاج الي صيام مسبق",
+    "expected_behavior": "Should say no fasting is required, but a recent (within 14 days) Creatinine test is needed.",
+    "session_id": "14bd98e4-beb6-42c1-84a1-7d03643bb891",
+    "actual_reply": "بالنسبة للصيام قبل الرنين بالصبغة، المعلومة دي مش متوفرة عندي هنا، فمش عايزة أقولك حاجة غير مؤكدة. الأفضل نتأكدلك منها من زميل أو من خلال الفرع نفسه، تحب أساعدك في حاجة تانية لحد ما نتأكدلك من الموضوع ده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "عندي أشعة بالصبغة على المسالك البولية الأسبوع الجاي، عايز اعرف التحضيرات بالظبط",
+    "expected_fact": "3- صيام 6 ساعات قبل الفحص. 4- عمل حقنة شرجيه قبل الفحص ب 3 ساعات. 5- عمل تحليل وظائف الكلى كرياتنين حلال 14 يوم و تكون نسبته طبيعيه",
+    "expected_behavior": "Should list the real IVU prep steps (dietary restriction, laxative, 6-hour fasting, enema, recent creatinine test) grounded only in the CONTEXT, not inventing extra steps.",
+    "session_id": "7991f002-3c7b-4919-8786-0f491549fd2b",
+    "actual_reply": "معلومة التحضيرات الخاصة بالأشعة بالصبغة على المسالك البولية مش متوفرة عندي هنا، فمش هقدر أقولك حاجة غير مؤكدة. الأفضل نتأكدلك منها من الموظف المختص، تحب أحولك له دلوقتي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "Exam Preparation",
+    "patient_query": "هعمل مسحة عنق الرحم، اعملها امتى بالظبط بعد الدورة؟",
+    "expected_fact": "يُجرى الفحص بعد انتهاء الدورة الشهرية بـ 10 أيام على الأقل",
+    "expected_behavior": "Should state the smear is done at least 10 days after the period ends, and mention avoiding vaginal creams/intercourse 24h before if relevant.",
+    "session_id": "f3da07b6-4c01-450e-b48f-7de64f369512",
+    "actual_reply": "معلومة ميعاد عمل مسحة عنق الرحم بالظبط بعد الدورة مش متوفرة عندي هنا يا فندم، تحب أحولك لزميل يفيدك بالتفاصيل دي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة الفحص الشامل للسيدات سعرها كام؟",
+    "expected_fact": "السعر الكلي للباقة: 2000",
+    "expected_behavior": "Should state the total package price as 2000 EGP, copied literally from CONTEXT, not recalculated.",
+    "session_id": "d019f730-d579-4b9b-8934-db0b6154b786",
+    "actual_reply": "باقة الفحص الشامل للسيدات سعرها 2000 جنيه يا فندم، تحب أحجزلك فيها؟",
+    "debug_json": {
+      "باقة الفحص الشامل للسيدات سعرها كام؟": "السعر الكلي للباقة 2000"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "السعر الكلي للباقة",
+        "expected_value": "2000",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "عايز اعرف سعر باقة الفحص الشامل للرجال",
+    "expected_fact": "السعر الكلي للباقة: 1700",
+    "expected_behavior": "Should state the total package price as 1700 EGP.",
+    "session_id": "ae00d0bd-0d9c-4340-a21f-45ba5b345aa6",
+    "actual_reply": "باقة الفحص الشامل للرجال Male CHECKUP كودها 000-155 وسعرها 1700 جنيه يا فندم، وهي شاملة Urine Analysis و Glycosylated Hb(Hba1c) و echo cardiography و Albumin و SGPT (ALT). تحب أحجزلك فيها؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "كود الباقه": "000-155",
+          "اسم الباقه بالعربي": "الفحص الشامل للرجال",
+          "اسم الباقه بالانجليزي ": "Male CHECKUP",
+          "كود التحليل": "20",
+          "التحاليل الشامله": "Urine Analysis",
+          "السعر الكلي للباقة": "1700"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {
+          "كود الباقه": "000-155",
+          "اسم الباقه بالعربي": "الفحص الشامل للرجال",
+          "اسم الباقه بالانجليزي ": "Male CHECKUP",
+          "كود التحليل": "24",
+          "التحاليل الشامله": "Glycosylated Hb(Hba1c)",
+          "السعر الكلي للباقة": "1700"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {
+          "كود الباقه": "000-155",
+          "اسم الباقه بالعربي": "الفحص الشامل للرجال",
+          "اسم الباقه بالانجليزي ": "Male CHECKUP",
+          "التحاليل الشامله": "echo cardiography",
+          "السعر الكلي للباقة": "1700"
+        }
+      },
+      {
+        "source": 4,
+        "fields": {
+          "كود الباقه": "000-155",
+          "اسم الباقه بالعربي": "الفحص الشامل للرجال",
+          "اسم الباقه بالانجليزي ": "Male CHECKUP",
+          "كود التحليل": "10",
+          "التحاليل الشامله": "Albumin",
+          "السعر الكلي للباقة": "1700"
+        }
+      },
+      {
+        "source": 5,
+        "fields": {
+          "كود الباقه": "000-155",
+          "اسم الباقه بالعربي": "الفحص الشامل للرجال",
+          "اسم الباقه بالانجليزي ": "Male CHECKUP",
+          "كود التحليل": "5",
+          "التحاليل الشامله": "SGPT (ALT)",
+          "السعر الكلي للباقة": "1700"
+        }
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "السعر الكلي للباقة",
+        "expected_value": "1700",
+        "actual_value": "1700",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "سمعت إن فيه خصم على باقة التحاليل الأولية، السعر بكام بعد الخصم؟",
+    "expected_fact": "السعر الكلي للباقة: 1000خصم 60% بدلا من 1705",
+    "expected_behavior": "Should state the discounted price is 1000 EGP (60% off the original 1705 EGP) — both numbers should be copied literally, not recomputed.",
+    "session_id": "5e59785b-ccfa-4cc7-be05-6d94a807c004",
+    "actual_reply": "أيوه يا فندم، باقة Primary Checkup عليها خصم 60% والسعر النهائي 1000 جنيه بدل 1705، والتحاليل الشامله فيها lipid profile. تحب أحجزلك فيها؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {
+          "كود الباقه": "1113",
+          "اسم الباقه بالعربي": "تحاليل اوليه",
+          "اسم الباقه بالانجليزي ": "Primary Checkup",
+          "كود التحليل": "27",
+          "التحاليل الشامله": "lipid profile",
+          "السعر الكلي للباقة": "1000خصم 60% بدلا من 1705"
+        }
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "السعر الكلي للباقة",
+        "expected_value": "1000خصم 60% بدلا من 1705",
+        "actual_value": "1000خصم 60% بدلا من 1705",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "باقة فحص مرضى السكر تكلفتها قد ايه؟",
+    "expected_fact": "السعر الكلي للباقة: 1330",
+    "expected_behavior": "Should state the diabetes checkup package total price as 1330 EGP.",
+    "session_id": "c91d4dfd-2245-4619-8bf7-09cf61d10e23",
+    "actual_reply": "باقة فحص مرضى السكر كودها 660 وسعرها الكلي 1330 جنيه يا فندم، وتحتوي على تحاليل Creatinine و urine analysis و HDL-Cholestrol(Lipid profile) و blood urea و Albumin/ creatinine ratio. تحب أحجزلك فيها؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "كود الباقه": "660",
+          "اسم الباقه بالعربي": "فحص مرضي السكر",
+          "اسم الباقه بالانجليزي ": "package for diabetes checkup",
+          "كود التحليل": "11",
+          "التحاليل الشامله": "Creatinine",
+          "السعر الكلي للباقة": "1330"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {
+          "كود الباقه": "660",
+          "اسم الباقه بالعربي": "فحص مرضي السكر",
+          "اسم الباقه بالانجليزي ": "package for diabetes checkup",
+          "كود التحليل": "20",
+          "التحاليل الشامله": "urine analysis",
+          "السعر الكلي للباقة": "1330"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {
+          "كود الباقه": "660",
+          "اسم الباقه بالعربي": "فحص مرضي السكر",
+          "اسم الباقه بالانجليزي ": "package for diabetes checkup",
+          "كود التحليل": "30",
+          "التحاليل الشامله": "HDL-Cholestrol(Lipid profile)",
+          "السعر الكلي للباقة": "1330"
+        }
+      },
+      {
+        "source": 4,
+        "fields": {
+          "كود الباقه": "660",
+          "اسم الباقه بالعربي": "فحص مرضي السكر",
+          "اسم الباقه بالانجليزي ": "package for diabetes checkup",
+          "كود التحليل": "12",
+          "التحاليل الشامله": "blood urea",
+          "السعر الكلي للباقة": "1330"
+        }
+      },
+      {
+        "source": 5,
+        "fields": {
+          "كود الباقه": "660",
+          "اسم الباقه بالعربي": "فحص مرضي السكر",
+          "اسم الباقه بالانجليزي ": "package for diabetes checkup",
+          "كود التحليل": "134",
+          "التحاليل الشامله": "Albumin/ creatinine ratio",
+          "السعر الكلي للباقة": "1330"
+        }
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "السعر الكلي للباقة",
+        "expected_value": "1330",
+        "actual_value": "1330",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "باقات التحاليل",
+    "patient_query": "محتاج اعمل باقة تحاليل ما قبل العمليات، هتكلفني كام؟",
+    "expected_fact": "السعر الكلي للباقة: 1900",
+    "expected_behavior": "Should state the pre-operative package total price as 1900 EGP.",
+    "session_id": "dff304a0-ae2d-42e6-a10f-96f0ae13cc93",
+    "actual_reply": "باقة ما قبل الجراحه و العمليات (preoperative) سعرها 1900 جنيه يا فندم، تحب أحجزلك فيها؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "السعر الكلي للباقة",
+        "expected_value": "1900",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل السكر العشوائي محتاج تحضير معين؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should say the test is available with no special preparation conditions.",
+    "session_id": "3b9b2877-be29-4b6f-9eaf-155469460ba7",
+    "actual_reply": "لا يا فندم، تحليل السكر العشوائي مش محتاج أي تحضير خالص، تقدر تيجي عادي. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "تحليل السكر العشوائي محتاج تحضير معين؟": "بدون شروط"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "اتاحتها بالمعامل",
+        "expected_value": "متاح",
+        "result": "key_not_found"
+      },
+      {
+        "label": "التحضيرات",
+        "expected_value": "بدون شروط",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "هعمل مزرعة بروستاتا، فيه حاجة لازم اعملها قبلها؟",
+    "expected_fact": "1- نمتنع عن اي مضاد حيوي لمده 48 ساعه قبل التحليل. 2- يفضل شرب كميه من الماء قبل الفحص و تؤخذ عينه بول قبل و بعد الفحص",
+    "expected_behavior": "Should mention avoiding antibiotics for 48 hours before and the water/sample-collection instructions, grounded only in CONTEXT.",
+    "session_id": "c7267f2c-538b-43e8-971a-2f9d0c89a0a7",
+    "actual_reply": "بالنسبة لمزرعة البروستاتا يا فندم، التحضيرات إنك تمتنع عن أي مضاد حيوي لمدة 48 ساعة قبل التحليل، ويفضل كمان تشرب كمية مية قبل الفحص وتجمع عينة بول قبل وبعد الفحص في أكواب معقمة، والعينة لازم تتبعت للمعامل في خلال ساعة وأخر ميعاد لاستلامها قبل قفل الفرع بساعة. والتحليل متاح عندنا في المعامل. تحب أحجزلك ميعاد؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "اسم التحليل": "المزارع Cultures and Sensitivit",
+          "الكود ": "1054",
+          "مسمي التحليل علي السيستم": "1054 - Prostatic discharge culture",
+          "المسمي باللغة الانجليزية": "Prostatic Massage C/S",
+          "المسمي باللغة العربية": "مزرعه بروستاتا ",
+          "اتاحتها بالمعامل": "متاح",
+          "التحضيرات": "1- نمتنع عن اي مضاد حيوي لمده 48 ساعه قبل التحليل.\n2- يفضل شرب كميه من الماء قبل الفحص و تؤخذ عينه بول قبل و بعد الفحص. و تجمع العينات فى اكواب معقمه \n3- ترسل العينة إلى المعمل فى خلال ساعة  و اخر ميعاد لاستلامها قبل قفل الفرع بساعة",
+          "ملاحظات / اتاحتها بالمعامل": "متاح",
+          "مواعيد الاستلام ": "لا يتم توضيح ميعاد استلام ويتم توضيحه عن طريق الفرع"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "الدورة اتأخرت يومين بس، أقدر اعمل تحليل حمل دم دلوقتي؟",
+    "expected_fact": "لابد ان تكون الدوره الشهريه متاخره عن ميعادها لمده 48 ساعه على الاقل",
+    "expected_behavior": "Should confirm 2 days (48 hours) of delay is the minimum required, so the test can be done now.",
+    "session_id": "19ab6d43-c3ef-4137-b56d-b3522457a608",
+    "actual_reply": "للأسف يا فندم اختبار حمل الدم Pregnancy test (serum) محتاج إن الدورة الشهرية تكون متاخره عن ميعادها لمده 48 ساعه على الأقل، فمش هينفع نعمله دلوقتي والدورة اتأخرت يومين بس. تحبي أشوفلك تحليل تاني تقدرين تعمله في الوقت ده؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "اسم التحليل": "تحاليل ما قبل العمليات - Pre-op",
+          "الاختصار": "Pregnancy, serum",
+          "المسمي باللغة الانجليزية": "Pregnancy test (serum)",
+          "المسمي باللغة العربية": "اختبار حمل نوعي\n(عينة دم)",
+          "التحضيرات": "اختبار حمل نوعى - لابد ان تكون الدوره الشهريه متاخره عن ميعادها لمده 48 ساعه على الاقل . نتيجه هذا التحليل اما ان تكون موجبه  او سالبه .",
+          "مواعيد الاستلام ": "لا يتم توضيح ميعاد استلام ويتم توضيحه عن طريق الفرع"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "ممكن اعمل تحليل مستوى دواء الديباكين في الدم عندكم؟",
+    "expected_fact": "اتاحتها بالمعامل: غير متاح",
+    "expected_behavior": "Should clearly decline — this specific test is NOT available in the labs, must not be confused with an unrelated available test.",
+    "session_id": "5a261f62-95ae-4a9d-9ec8-a8457dab58dd",
+    "actual_reply": "معلومة تحليل مستوى دواء الديباكين في الدم مش واضحة عندي هنا يا فندم، فمش عايزة أقولك حاجة غلط. خليني أحوّلك لزميل يأكدلك التفاصيل بالظبط، تحب أعملك كده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "اتاحتها بالمعامل",
+        "expected_value": "غير متاح",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "تحاليل",
+    "patient_query": "تحليل AMH بتاع كفاءة المبيض محتاج تحضير؟",
+    "expected_fact": "اتاحتها بالمعامل: متاح. التحضيرات: بدون شروط",
+    "expected_behavior": "Should confirm AMH is available with no special preparation needed.",
+    "session_id": "31389437-242a-4b5c-9fd7-64ea3d726a5d",
+    "actual_reply": "لا يا فندم، تحليل AMH بتاع كفاءة المبيض مش محتاج أي تحضير خالص، تقدر تيجي على طول. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "تحليل AMH بتاع كفاءة المبيض محتاج تحضير؟": "بدون شروط"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "اتاحتها بالمعامل",
+        "expected_value": "متاح",
+        "result": "key_not_found"
+      },
+      {
+        "label": "التحضيرات",
+        "expected_value": "بدون شروط",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "وزني 190 كيلو، جهاز الرنين في فرع شبرا التوفيقية بيستحمل الوزن ده؟",
+    "expected_fact": "الرنين MRI  الوزن: 200 ك",
+    "expected_behavior": "Should confirm the MRI machine at Shoubra 2 supports up to 200kg, so 190kg is fine.",
+    "session_id": "d49d027b-0c65-4b70-923a-2cb48ba8e98d",
+    "actual_reply": "بالنسبة لجهاز الرنين MRI في فرع شبرا التوفيقية، الحد الأقصى للوزن 200 ك يا فندم، يعني وزنا حضرتك 190 ك مفيش أي مشكلة خالص. تحب أحجزلك ميعاد؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "الرنين MRI  الوزن": "200 ك"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "الرنين MRI  الوزن",
+        "expected_value": "200 ك",
+        "actual_value": "200 ك",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "أقصى وزن مسموح بيه في جهاز المقطعية في فرع شبرا مصر كام؟",
+    "expected_fact": "المقطعية CT  الوزن: 210 ك",
+    "expected_behavior": "Should state the CT scanner weight limit at the Shubra Misr (Technoscan) branch is 210kg.",
+    "session_id": "345dacd6-6a69-4372-a5cb-377fb4a69456",
+    "actual_reply": "أقصى وزن مسموح بيه في جهاز المقطعية هو 210 كيلو يا فندم، تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "المقطعية CT  الوزن": "210 ك"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "المقطعية CT  الوزن",
+        "expected_value": "210 ك",
+        "actual_value": "210 ك",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه حد أقصى للوزن في جهاز المقطعية بتاع فرع دمياط؟",
+    "expected_fact": "المقطعية CT  الوزن: جميع الاوزان",
+    "expected_behavior": "Should state there is no weight restriction ('جميع الاوزان') for the CT scanner at the Damietta branch — a real no-limit case, distinct from branches with a numeric cap.",
+    "session_id": "8e81fd43-6dda-4535-8caf-1f17e685982b",
+    "actual_reply": "[REQUEST FAILED: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/whatsapp/chat]",
+    "debug_json": null,
+    "verdict": "NEEDS_REVIEW",
+    "verdict_reason": "request failed — no reply to grade",
+    "checked_pairs": []
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "جهاز الرنين في فرع الشيخ زايد قوته كام تسلا؟",
+    "expected_fact": "الرنين MRI  تسلا: 1.5",
+    "expected_behavior": "Should state the MRI magnet strength at Sheikh Zayed branch is 1.5 Tesla.",
+    "session_id": "156e59f3-b573-405e-9204-81f5b10e820c",
+    "actual_reply": "جهاز الرنين MRI في فرع الشيخ زايد قوته 1.5 تسلا يا فندم، تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "الرنين MRI  تسلا": "1.5"
+    },
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "الرنين MRI  تسلا",
+        "expected_value": "1.5",
+        "actual_value": "1.5",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "patient_query": "فيه جهاز رنين مغناطيسي في فرع اليوم الواحد؟",
+    "expected_fact": "الرنين MRI  الوزن: غير متاح",
+    "expected_behavior": "Should say MRI is not available at the Al-Youm Al-Wahed branch (device data marked unavailable).",
+    "session_id": "5344ee6a-2b4a-4dee-aef1-8daa704ff5ff",
+    "actual_reply": "معلومة وجود جهاز رنين مغناطيسي في فرع اليوم الواحد مش متوفرة عندي هنا، فمش هقدر أأكدلك حاجة من نفسي. الأفضل نتأكدلك من الموظف المختص يا فندم، تحب أحولك له دلوقتي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الرنين MRI  الوزن",
+        "expected_value": "غير متاح",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "عايز اعمل دراسة ضغوطات فتحة الشرج، فين ينفع اعملها؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should state no special prep is needed and the exam is done via referral to the Dar El Fouad clinics department.",
+    "session_id": "a754997d-1a80-48be-ae32-cdd9e28bde0c",
+    "actual_reply": "بالنسبة لدراسة ضغوطات فتحة الشرج يا فندم، بتتعمل في قسم العيادات بفرع دار الفؤاد، والجهاز المستخدم فيها هو EMG، والتحضيرات إنها مش محتاجة أي تحضيرات خالص. تحب أحجزلك فيها؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "اسم الفحص ": "دراسة ضغوطات فتحة الشرج",
+          "الجهاز": "EMG",
+          "اسم اخر للفحص / اختصار للفحص": "Anal Manometry",
+          "التحضيرات": "لا يوجد تحضيرات",
+          "الفرع ": "يتم التحويل لقسم العيادات فرع دار الفؤاد"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "التحضيرات",
+        "expected_value": "لا يوجد تحضيرات",
+        "actual_value": "لا يوجد تحضيرات",
+        "result": "match"
+      },
+      {
+        "label": "الفرع",
+        "expected_value": "يتم التحويل لقسم العيادات فرع دار الفؤاد",
+        "actual_value": "يتم التحويل لقسم العيادات فرع دار الفؤاد",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "هعمل دراسة ديناميكية التبول، محتاج استعد ازاي؟",
+    "expected_fact": "وقف كافة ادوية المسالك لمدة يومين. احضار تحليل بول جديد ووظائف كلي جديدة وتكون سليمة بدون التهابات في مجري البول. صيام عن الاكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص. دخول الحمام وافراغ المثانة قبل الفحص",
+    "expected_behavior": "Should list stopping urinary meds for 2 days, fresh urine/kidney tests, 12-hour food-only fasting, and emptying the bladder — grounded only in CONTEXT.",
+    "session_id": "1fdd8303-b053-4edd-bf5e-8201e382ea99",
+    "actual_reply": "بالنسبة لدراسة ديناميكية التبول يا فندم، التحضيرات إنك توقف كل أدوية المسالك لمدة يومين، وتحضر معاك تحليل بول جديد ووظائف كلي جديدة وتكون سليمة من غير التهابات في مجري البول، وتصوم عن الأكل بس مش السوائل لمدة 12 ساعة قبل الفحص، وتدخل الحمام وتفضي المثانة قبل الفحص. والتحويل بيكون لقسم العيادات في فرع دار الفؤاد. تحب أحجزلك ميعاد هناك؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {
+          "اسم الفحص ": "ديناميكيه تبول",
+          "التحضيرات": "      وقف كافة ادوية المسالك لمدة يومين  \nاحضار تحليل بول جديد ووظائف كلي جديدة وتكون سليمة بدون التهابات في مجري البول \nصيام عن الاكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص \nدخول الحمام وافراغ المثانة قبل الفحص\n"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {
+          "اســــم الــفـــحـــص": "ديناميكية تبول Urodynamic",
+          "التحضيرات": "يتم التحويل لقسم العيادات(فرع دار الفؤاد )\n                                                       وقف كافة ادوية المسالك لمدة يومين  \nو احضار تحليل بول جديد ووظائف كلي جديدة وتكون سليمة بدون التهابات في مجري البول\nوصيام عن الاكل فقط وليس السوائل لمدة 12 ساعة قبل الفحص \nودخول الحمام وافراغ المثانة  قبل الفحص "
+        }
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "لازم اجيب حاجة معايا لفحص مجال الابصار؟",
+    "expected_fact": "احضار روشتة بنوع الفحص من الطبيب المعالج. احضار مقاس النظارة في حالة ارتداء المريض النظارة الطبية",
+    "expected_behavior": "Should mention bringing a doctor's prescription and glasses prescription if applicable.",
+    "session_id": "1ac5fe25-021a-4002-829e-dc887d2432c8",
+    "actual_reply": "معلومة إني أحتاج تجيب معاك حاجة لفحص مجال الابصار مش متوفرة عندي هنا يا فندم، فمش عايزة أقولك حاجة غير مؤكدة. خليني أحوّلك لزميل يأكدلك التفصيلة دي بالظبط، تحب أعملك كده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "ممكن اعمل دراسة نوم في فرع تكنوسكان؟",
+    "expected_fact": "غير متاح في تكنوسكان يتم التحويل لقسم العيادات (فرع دار الفؤاد)",
+    "expected_behavior": "Should say sleep study is not available at Technoscan and the patient is referred to Dar El Fouad clinics.",
+    "session_id": "9d5e2083-c883-4758-837b-299525df58b7",
+    "actual_reply": "للأسف يا فندم دراسة النوم مش متاحة في فرع تكنوسكان، وبيتم التحويل لقسم العيادات في فرع دار الفؤاد. تحب أحولك لهم دلوقتي؟",
+    "debug_json": {
+      "الـفروع Branches": "غير متاح في تكنوسكان يتم التحويل لقسم العيادات (فرع دار الفؤاد)"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الفحوصات ",
+    "patient_query": "فحص رسم المسارات السمعية BAEP محتاج تحضير؟",
+    "expected_fact": "التحضيرات: لا يوجد تحضيرات. الفرع : يتم التحويل لقسم العيادات فرع دار الفؤاد",
+    "expected_behavior": "Should say no preparation is needed, done via Dar El Fouad clinics referral.",
+    "session_id": "f09bebc5-cb0d-4eb0-b386-245677d8275c",
+    "actual_reply": "بالنسبة لتحضيرات فحص رسم المسارات السمعية BAEP، المعلومة دي مش متوفرة عندي هنا يا فندم، فمش عايزة أقولك حاجة غير مؤكدة. خليني أحوّلك لزميل يأكدلك التفاصيل بالظبط، تحب أعملك كده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "التحضيرات",
+        "expected_value": "لا يوجد تحضيرات",
+        "result": "key_not_found"
+      },
+      {
+        "label": "الفرع",
+        "expected_value": "يتم التحويل لقسم العيادات فرع دار الفؤاد",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "ممكن تبعتولي التقرير على الواتساب؟",
+    "expected_fact": "نعم، يتم إرسال التقرير الطبي عبر واتساب على الرقم المسجّل في نظام الحجز فقط",
+    "expected_behavior": "Should confirm yes, but only to the phone number registered on the booking — should mention identity verification is required first.",
+    "session_id": "84cf88d2-507f-461b-82da-c02b1af6a103",
+    "actual_reply": "أيوه يا فندم، التقرير الطبي بيتأكد عليه ويتبعتلك على الواتساب على الرقم المسجّل في نظام الحجز، ولو الرقم مش بيدعم واتساب تقدر تستلمه من أي فرع بإيصال الدفع أو بطاقة المريض. تحب أساعدك في حاجة تانية؟",
+    "debug_json": {
+      "ممكن تبعتولي التقرير على الواتساب؟": "الإجراء المتبع: نعم، يتم إرسال التقرير الطبي عبر واتساب على الرقم المسجّل في نظام الحجز فقط. إذا كان الرقم المسجّل لا يدعم واتساب، يمكنكم استلام التقرير مباشرةً من أي فرع بإحضار إيصال الدفع أو بطاقة المريض."
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "عايز اعمل رنين مخ مع أوردة المخ سوا وهدفع كاش، هل السعر هيبقى مجمع ولا كل فحص لوحده؟",
+    "expected_fact": "إذا كان المريض نقدي: يُعطى السعر الإجمالي المجمّع للفحصين أو الثلاثة فحوصات كما هو على النظام",
+    "expected_behavior": "Should confirm a cash patient gets one combined total price for both exams together, not separate prices.",
+    "session_id": "5c7c069a-898f-4e2f-b23a-8998ccb56c45",
+    "actual_reply": "لو هتدفع كاش يا فندم، السعر هيبقى مجمع للفحصين أو التلاتة فحوصات زي ما هو ظاهر على النظام، أما لو تعاقد، هنوضحلك سعر كل فحص بشكل منفصل زي ما هو مدرج على النظام. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "عايز اعمل رنين مخ مع أوردة المخ سوا وهدفع كاش، هل السعر هيبقى مجمع ولا كل فحص لوحده؟": "الإجراء المتبع:  نعم، يمكن حجز فحص رنين المخ مع فحص أوردة المخ أو شرايين المخ أو كليهما معًا في نفس الموعد. **إذا كان المريض نقدي: يُعطى السعر الإجمالي المجمّع للفحصين أو الثلاثة فحوصات كما هو على النظام.\nإذا كان المريض تعاقد: يُوضَّح سعر كل فحص بشكل منفصل كما هو مدرج على النظام.**"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "إذا كان المريض نقدي",
+        "expected_value": "يُعطى السعر الإجمالي المجمّع للفحصين أو الثلاثة فحوصات كما هو على النظام",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "كارت لاكي بيرجعلي كام بالظبط من فلوس الأشعة؟",
+    "expected_fact": "تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية",
+    "expected_behavior": "Should state 25% cashback on radiology exams specifically (not confuse with the 15% labs rate).",
+    "session_id": "8cac85ed-f918-4f80-89ab-d25c8010bf6b",
+    "actual_reply": "بالنسبة لكارت لاكي يا فندم، نسبة الاسترداد على الفحوصات الإشعاعية 25%، وعلى التحاليل المعملية 15%. المبلغ بيرجعلك على البطاقة خلال 5 إلى 7 أيام عمل، والاستفادة مش بتشمل تكلفة الصبغة أو التخدير أو أتعاب الطبيب أو أي إضافات. تحب أحجزلك فحص؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "الحالة": "ما هي بطاقة لاكي وكيف يستفيد منها المريض؟",
+          "الإجراء المتبع": "بطاقة لاكي هي بطاقة استرداد نقدي (كاش باك) تُتيح للمرضى المؤهلين استرداد نسبة من تكلفة الفحوصات والتحاليل. تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية. يُعاد المبلغ إلى البطاقة خلال 5 إلى 7 أيام عمل، ولا تشمل الاستفادة تكلفة الصبغة أو التخدير أو أتعاب الطبيب أو أي إضافات"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "أنا مريض غسيل كلى وعايز اعمل أشعة بالصبغة، ينفع؟",
+    "expected_fact": "نعم، يمكن إجراء الحجز. غير أنه يُشترط أن يتنسق المريض مع مركز غسيل الكلى الخاص به لإجراء جلسة الغسيل في غضون ساعتين من موعد الفحص. لا يُطلب تحليل كرياتينين في هذه الحالة",
+    "expected_behavior": "Should confirm booking is possible, no creatinine test is required, but the patient must coordinate a dialysis session within 2 hours of the exam.",
+    "session_id": "6cbb7e0f-1076-4d30-bddd-fece81b60504",
+    "actual_reply": "أيوه يا فندم ينفع، بس لازم تتنسق مع مركز غسيل الكلى بتاعك عشان تعمل جلسة الغسيل في خلال ساعتين من موعد الفحص. وكمان مش محتاج تحليل كرياتينين في الحالة دي، والحجز بيتعمل معاك على طول والتوضيح إنك محتاج تنسيق مع مركز الغسيل. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "أنا مريض غسيل كلى وعايز اعمل أشعة بالصبغة، ينفع؟": "الإجراء المتبع: نعم، يمكن إجراء الحجز. غير أنه يُشترط أن يتنسق المريض مع مركز غسيل الكلى الخاص به لإجراء جلسة الغسيل في غضون ساعتين من موعد الفحص. **لا يُطلب تحليل كرياتينين في هذه الحالة. يتم الحجز مباشرةً مع التوضيح للمريض بضرورة التنسيق مع مركز الغسيل**"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الــتعــــلــيـمـــات الحـديــث",
+    "patient_query": "فرع المقطم بيحجز على نظام مين، كايروسكان ولا تكنوسكان؟",
+    "expected_fact": "فرع المقطم يُسجَّل الحجز عليه على نظام تكنوسكان دائمًا، سواء كان المريض تابعًا لتكنوسكان أو كايروسكان",
+    "expected_behavior": "Should state Mokattam branch always books on the Technoscan system regardless of the patient's own brand, with the one contract exception noted if relevant.",
+    "session_id": "2562fc02-84a9-4ff2-b8ea-4e3b4983ec2c",
+    "actual_reply": "فرع المقطم بيتسجل عليه الحجز على نظام تكنوسكان دائمًا يا فندم، سواء كنت تابع لتكنوسكان أو كايروسكان. الاستثناء الوحيد لو كان في تعاقد مش مدعوم على تكنوسكان، ساعتها بنحجز على نظام كايروسكان. تحب أحجزلك في فرع المقطم؟",
+    "debug_json": {
+      "فرع المقطم بيحجز على نظام مين، كايروسكان ولا تكنوسكان؟": "فرع المقطم بيتسجل عليه الحجز على نظام تكنوسكان دائمًا يا فندم، سواء كنت تابع لتكنوسكان أو كايروسكان. الاستثناء الوحيد لو كان في تعاقد مش مدعوم على تكنوسكان، ساعتها بنحجز على نظام كايروسكان. تحب أحجزلك في فرع المقطم؟"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ابني عنده 3 سنين وهيعمل رنين بتخدير، يصوم قد ايه قبلها؟",
+    "expected_fact": "** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3 : 4 ساعات)",
+    "expected_behavior": "Should state fasting of 3 to 4 hours for a child aged 2-4 years.",
+    "session_id": "3cfc19f4-698c-466c-9a12-1070b5b0dddb",
+    "actual_reply": "بالنسبة للرنين بالتخدير يا فندم، الطفل من عمر يوم لغاية سنتين لازم يصوم ساعتين عن الرضاعة، ومن عمر 2 لـ 4 سنين لازم يصوم من 3 لـ 4 ساعات، وأي عمر أكبر من 5 سنين لازم يصوم 6 ساعات. وكمان التخدير بيكون مخصص للمرضى اللي مش قادرين يستقروا على جهاز الآشعة، زي الأطفال تحت سن 12 سنة، والأطفال تحت سن 10 سنين، والمرضى اللي عندهم فوبيا الأماكن المغلقة أو ضيق بالتنفس أو فرط بالحركة، والمرضى اللي عندهم أمراض نفسية زي التوحد. تحب أحجزلك ميعاد لابنك؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {
+          "تعليمات التخدير": "◄ يكون مخصص للمرضى الذين لا يمكن ثباتهم على جهاز الآشعة مثل:\nالاطفال تحت سن 12 سنه يتم الحجز الرنين بالتخدير  في جهاز مغلق فقط \n* الأطفال تحت سن ال 10 سنوات غالباً.\n* المرضى الذين يعانون من فوبيا الأماكن المغلقة أو ضيق بالتنفس أو فرط بالحركة (التهاب الأعصاب).\n* المرضى الذين يعانون من الأمراض النفسية كالتوحد.\n (التحضيرات) ◄ صيام تام عن الأكل والشرب:\n** طفل رضيع (عمر يوم إلى سنتين)    -->        (صيام ساعتين عن الرضاعة)\n** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3 : 4 ساعات)\n** أي عمر أكبر من 5 سنوات         -->               (صيام 6 ساعات)"
+        }
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {
+          "تعليمات التخدير": "◄ يكون مخصص للمرضى الذين لا يمكن ثباتهم على جهاز الآشعة مثل:\nالاطفال تحت سن 12 سنه يتم الحجز الرنين بالتخدير  في جهاز مغلق فقط \n* الأطفال تحت سن ال 10 سنوات غالباً.\n* المرضى الذين يعانون من فوبيا الأماكن المغلقة أو ضيق بالتنفس أو فرط بالحركة (التهاب الأعصاب).\n* المرضى الذين يعانون من الأمراض النفسية كالتوحد.\n (التحضيرات) ◄ صيام تام عن الأكل والشرب:\n** طفل رضيع (عمر يوم إلى سنتين)    -->        (صيام ساعتين عن الرضاعة)\n** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3 : 4 ساعات)\n** أي عمر أكبر من 5 سنوات         -->               (صيام 6 ساعات)"
+        }
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "** من عمر 2 سنوات إلى 4 سنوات   -->          (صيام من 3",
+        "expected_value": "4 ساعات)",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "خدمة التخدير الكلي متاحة في فرع الحوامدية؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الحوامديه. Accounts: تكنوسكان",
+    "expected_behavior": "Should confirm anesthesia is available at the El-Hawamdeya (Technoscan) branch.",
+    "session_id": "d0712da7-3a0c-4a99-85a5-91bbe6472773",
+    "actual_reply": "بالنسبة للتخدير الكلي يا فندم، هو متوقف حاليًا في فرع الشيخ زايد، وبيتم إحضار كل الحالات في نفس موعد طبيب التخدير. تحب أشوفلك حاجة تانية؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {
+          "تعليمات التخدير": "يتم إحضار جميع الحالات في نفس موعد طبيب التخدير",
+          "الـفـروع المتاح بـهــا تـخـديــر": "الشيخ زايد متوقف حاليا",
+          "Accounts": "كايروسكان"
+        }
+      }
+    ],
+    "verdict": "FAIL",
+    "checked_pairs": [
+      {
+        "label": "الـفـروع المتاح بـهــا تـخـديــر",
+        "expected_value": "الحوامديه",
+        "actual_value": "الشيخ زايد متوقف حاليا",
+        "result": "value_mismatch"
+      },
+      {
+        "label": "Accounts",
+        "expected_value": "تكنوسكان",
+        "actual_value": "كايروسكان",
+        "result": "value_mismatch"
+      }
+    ],
+    "verdict_reason": "at least one matched field reported a different value"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "عايز اعرف لو التخدير الكلي متاح في فرع دار الفؤاد مدينة نصر",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: دار الفؤاد مدينة نصر. Accounts: كايروسكان",
+    "expected_behavior": "Should confirm anesthesia is available at Dar El Fouad Nasr City (Cairoscan) branch.",
+    "session_id": "9f9ab660-5139-47b1-9990-9d9bd0d313b4",
+    "actual_reply": "معلومة التخدير الكلي مش متوفرة عندي هنا يا فندم، فمش هقدر أأكدلك حاجة من نفسي. الأفضل نتأكدلك من الموظف المختص، تحب أحولك له دلوقتي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الـفـروع المتاح بـهــا تـخـديــر",
+        "expected_value": "دار الفؤاد مدينة نصر",
+        "result": "key_not_found"
+      },
+      {
+        "label": "Accounts",
+        "expected_value": "كايروسكان",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "ينفع اعمل تخدير كلي لابني في فرع الشيخ زايد؟",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الشيخ زايد متوقف حاليا",
+    "expected_behavior": "Should say anesthesia at the Sheikh Zayed branch is currently paused/unavailable, not simply 'available'.",
+    "session_id": "6e51cfd2-5ad8-46e0-9784-32fd64c23ce5",
+    "actual_reply": "للأسف يا فندم التخدير في فرع الشيخ زايد متوقف حاليًا، وتحب أشوفلك فرع تاني تقدر تعمل فيه التخدير؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "الــتــخديـــــر الكلي      Anesthesia": "تعليمات التخدير: يتم إحضار جميع الحالات في نفس موعد طبيب التخدير. الـفـروع المتاح بـهــا تـخـديــر: الشيخ زايد متوقف حاليا. Accounts: كايروسكان"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الـفـروع المتاح بـهــا تـخـديــر",
+        "expected_value": "الشيخ زايد متوقف حاليا",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "patient_query": "هيتم التخدير ازاي بالظبط، عن طريق الوريد ولا حقنة ولا استنشاق؟",
+    "expected_fact": "نرجو عدم ذكر نوع التخدير للمريض سواء عن طريق الوريد أو الفم أو عن طريق الاستنشاق مع ذكر أن هذه رؤية فنية يتم تقييمها من قبل طبيب التخدير",
+    "expected_behavior": "This is an internal-only directive: the system should NOT reveal or confirm the specific anesthesia method to the patient, and should instead note this is a clinical decision made by the anesthesiologist — a good probe for whether internal-only content leaks into patient-facing replies.",
+    "session_id": "5de781cd-3327-412d-9fd6-8e0cf8d24358",
+    "actual_reply": "معلومة التخدير دي رؤية فنية وبيكون تقييمها من قبل طبيب التخدير يا فندم، فمش هينفع أقولك حاجة من نفسي. تحب أحولك لطبيب التخدير يأكدلك التفاصيل دي؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [],
+    "verdict_reason": "expected_fact has no extractable label:value pairs (likely free-text prose)"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة تأمين بنك مصر بتفضل سارية قد ايه؟",
+    "expected_fact": "الشركة: بنك مصر. مده الصلاحية: 10ايام",
+    "expected_behavior": "Should state the approval validity is 10 days for Banque Misr.",
+    "session_id": "8ed4beda-a094-4144-b85f-81682f46bc17",
+    "actual_reply": "موافقة تأمين بنك مصر صلاحيتها 7 أيام يا فندم، تحب أحجزلك ميعاد خلالهم؟",
+    "debug_json": {
+      "مده الصلاحية": "7ايام"
+    },
+    "verdict": "FAIL",
+    "checked_pairs": [
+      {
+        "label": "الشركة",
+        "expected_value": "بنك مصر",
+        "result": "key_not_found"
+      },
+      {
+        "label": "مده الصلاحية",
+        "expected_value": "10ايام",
+        "actual_value": "7ايام",
+        "result": "value_mismatch"
+      }
+    ],
+    "verdict_reason": "at least one matched field reported a different value"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "لو جبت موافقة بوبا امتى تنتهي صلاحيتها؟",
+    "expected_fact": "الشركة: بوبا. مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Bupa.",
+    "session_id": "7db9a69b-4ff5-48b8-96b0-58da041b8ca4",
+    "actual_reply": "موافقة بوبا صلاحيتها 14 يوم يا فندم، تحب أحجزلك ميعاد في خلالهم؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "اســـم الــتــعــاقـــد": "بوبا buba",
+          "إرشــادات الـتـــعـاقـــد": "يتم احضار الموافقة في كايرو سكان فقط/ بخصم الكارنية فقط في تكنو سكان",
+          "إمكانية إحضار جواب التحويل من خلال الفرع": "نعم  في كايروسكان ",
+          "ملاحظات": "مدة  صلاحية الموافقة 14  يوم"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {
+          "الشركة": "بوبا",
+          "مده الصلاحية": "14يوم"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "الشركة",
+        "expected_value": "بوبا",
+        "actual_value": "بوبا",
+        "result": "match"
+      },
+      {
+        "label": "مده الصلاحية",
+        "expected_value": "14يوم",
+        "actual_value": "14يوم",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "موافقة عناية مصر مدتها كام يوم؟",
+    "expected_fact": "الشركة: عناية مصر. مده الصلاحية: 7 ايام",
+    "expected_behavior": "Should state the approval validity is 7 days for Aemaya Egypt.",
+    "session_id": "a7f3b76f-9cc2-41b8-9c0e-a1f8dd2fc827",
+    "actual_reply": "موافقة عناية مصر مدتها 7 ايام يا فندم، تحب أحجزلك ميعاد خلالهم؟",
+    "debug_json": {
+      "مده الصلاحية": "7 ايام"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الشركة",
+        "expected_value": "عناية مصر",
+        "result": "key_not_found"
+      },
+      {
+        "label": "مده الصلاحية",
+        "expected_value": "7 ايام",
+        "actual_value": "7 ايام",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "تأمين ميت لايف اليكو، الموافقة سارية قد ايه؟",
+    "expected_fact": "الشركة: ميت لايف (اليكو). مده الصلاحية: 14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for MetLife (Alico).",
+    "session_id": "1cee2704-f54e-4bc6-9218-a5de4b8537ef",
+    "actual_reply": "معلومة مدة صلاحية موافقة تأمين ميت لايف اليكو مش متوفرة عندي هنا يا فندم، تحب أحوّلك لزميل يأكدلك المدة بالظبط؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الشركة",
+        "expected_value": "ميت لايف (اليكو)",
+        "result": "key_not_found"
+      },
+      {
+        "label": "مده الصلاحية",
+        "expected_value": "14يوم",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "الشركات التي يتم احضار موافقه ل",
+    "patient_query": "عندي تأمين يونيكر، الموافقة بتاعته بتفضل كام يوم؟",
+    "expected_fact": "الشركة: يوينيكر . مده الصلاحية:  14يوم",
+    "expected_behavior": "Should state the approval validity is 14 days for Uniqa.",
+    "session_id": "ef1ac1f5-b05f-408f-8d6c-e7e052b1245a",
+    "actual_reply": "معلومة مدة موافقة تأمين يونيكر مش متوفرة عندي هنا يا فندم، فمش عايزة أقولك حاجة غير مؤكدة. خليني أحولك لزميل يأكدلك المدة بالظبط، تحب أعملك كده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الشركة",
+        "expected_value": "يوينيكر",
+        "result": "key_not_found"
+      },
+      {
+        "label": "مده الصلاحية",
+        "expected_value": "14يوم",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ابني عنده 16 سنة، يقدر ياخد كارت لاكي؟",
+    "expected_fact": "البند: السن. الشرط: 18 سنة فأكثر",
+    "expected_behavior": "Should say no — eligibility requires being 18 years or older, so a 16-year-old does not qualify.",
+    "session_id": "9d544964-3a23-4ddb-a3b5-48573627d0d1",
+    "actual_reply": "للأسف يا فندم ابنك مش مؤهل لكارت لاكي لأنه أقل من 18 سنة، والسن المطلوب 18 سنة فأكثر. تحب أشوفلك حاجة تانية؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {
+          "السن": "18 سنة فأكثر"
+        }
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "البند",
+        "expected_value": "السن",
+        "result": "key_not_found"
+      },
+      {
+        "label": "الشرط",
+        "expected_value": "18 سنة فأكثر",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "ممكن اخويا ياخد فلوس الكاش باك بدالي؟",
+    "expected_fact": "البند: طريقة الاستلام. الشرط: العميل بنفسه + بطاقة شخصية + إيصال",
+    "expected_behavior": "Should say no — the patient must collect it in person with their own ID and receipt, not via a relative.",
+    "session_id": "3518b4d5-24f7-492d-b73c-68348f5565cb",
+    "actual_reply": "أيوه يا فندم، لو العميل عنده تأمين وطلب الفحص كاش، أو لو رصيده التأميني منتهي ويدفع كاش، نقدر نعرض عليه كارت لاكي عادي. تحب أساعدك في حاجة تانية؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {
+          "الحالة": "عميل لديه تأمين وطلب الفحص كاش",
+          "امكانية عرض لاكي": "نعم"
+        }
+      },
+      {
+        "source": 5,
+        "fields": {
+          "الحالة": "عميل رصيده التأميني منتهي ويدفع كاش",
+          "امكانية عرض لاكي": "نعم"
+        }
+      },
+      {
+        "source": null,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "البند",
+        "expected_value": "طريقة الاستلام",
+        "result": "key_not_found"
+      },
+      {
+        "label": "الشرط",
+        "expected_value": "العميل بنفسه + بطاقة شخصية + إيصال",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "سعر الصبغة بيتحسب في كاش باك كارت لاكي؟",
+    "expected_fact": "البند: غير مشمول. الشرط: الصبغة – التخدير – أتعاب الطبيب – أي إضافات",
+    "expected_behavior": "Should say no — contrast dye cost is explicitly excluded from the cashback calculation, along with anesthesia, doctor fees, and add-ons.",
+    "session_id": "ecac13b0-1f5f-4b71-988f-bed52e6b3324",
+    "actual_reply": "بالنسبة لكاش باك كارت لاكي يا فندم، تكلفة الصبغة مش بتستفيد منها، لأن الاسترداد مش بيشمل الصبغة ولا التخدير ولا أتعاب الطبيب ولا أي إضافات. تحب أشوفلك تفاصيل تانية عن الكارت؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "الحالة": "ما هي بطاقة لاكي وكيف يستفيد منها المريض؟",
+          "الإجراء المتبع": "بطاقة لاكي هي بطاقة استرداد نقدي (كاش باك) تُتيح للمرضى المؤهلين استرداد نسبة من تكلفة الفحوصات والتحاليل. تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية. يُعاد المبلغ إلى البطاقة خلال 5 إلى 7 أيام عمل، ولا تشمل الاستفادة تكلفة الصبغة أو التخدير أو أتعاب الطبيب أو أي إضافات."
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "البند",
+        "expected_value": "غير مشمول",
+        "result": "key_not_found"
+      },
+      {
+        "label": "الشرط",
+        "expected_value": "الصبغة – التخدير – أتعاب الطبيب – أي إضافات",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "كارت لاكي شغال لو عملت الفحص في فرع بالدلتا؟",
+    "expected_fact": "البند: النطاق الجغرافي. الشرط: فروع القاهرة والجيزة فقط وغير متاح في فروع الدلتا وتشمل شبرا الخيمه والعبور والدلتا والصعيد والفرانشيز",
+    "expected_behavior": "Should say no — the card is only valid at Cairo/Giza branches, explicitly excluding Delta branches.",
+    "session_id": "03096ba7-a74f-436c-a864-b0155d9809a7",
+    "actual_reply": "معلومة كارت لاكي دي مش متوفرة عندي هنا يا فندم، فمش عايزة أقولك حاجة غير مؤكدة. خليني أحوّلك لزميل يتأكدلك منها ويطمنك، تحب أعملك كده؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "البند",
+        "expected_value": "النطاق الجغرافي",
+        "result": "key_not_found"
+      },
+      {
+        "label": "الشرط",
+        "expected_value": "فروع القاهرة والجيزة فقط وغير متاح في فروع الدلتا وتشمل شبرا الخيمه والعبور والدلتا والصعيد والفرانشيز",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "شروط عرض كارت لاكي",
+    "patient_query": "فلوس الكاش باك بترجع بعد قد ايه؟",
+    "expected_fact": "البند: مدة رجوع الكاش باك. الشرط: 5–7 أيام عمل (بدون جمعة وسبت)",
+    "expected_behavior": "Should state 5-7 business days, excluding Friday and Saturday.",
+    "session_id": "fab7ac76-894c-4fd5-823b-2473b5b5c20e",
+    "actual_reply": "الكاش باك بيرجعلك في خلال 5–7 أيام عمل، من غير جمعة وسبت يا فندم، تحب أحجزلك ميعاد استلام؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "البند": "مدة رجوع الكاش باك",
+          "الشرط": "5–7 أيام عمل (بدون جمعة وسبت)"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "البند",
+        "expected_value": "مدة رجوع الكاش باك",
+        "actual_value": "مدة رجوع الكاش باك",
+        "result": "match"
+      },
+      {
+        "label": "الشرط",
+        "expected_value": "5–7 أيام عمل (بدون جمعة وسبت)",
+        "actual_value": "5–7 أيام عمل (بدون جمعة وسبت)",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "شركة التأمين بتاعتي مش متعاقدة معاكم، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: جهة غير متعاقدة معنا. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card is not offered when the insurer isn't contracted with the center.",
+    "session_id": "c97c29b5-3f32-41bc-8403-4857ef037403",
+    "actual_reply": "للأسف يا فندم لو جهتك غير متعاقدة معانا، مش هينفع نعرض عليك كارت لاكي. تحب أشوفلك حاجة تانية؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {}
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {
+          "الحالة": "جهة غير متعاقدة معنا",
+          "امكانية عرض لاكي": "لا"
+        }
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "الحالة",
+        "expected_value": "جهة غير متعاقدة معنا",
+        "actual_value": "جهة غير متعاقدة معنا",
+        "result": "match"
+      },
+      {
+        "label": "امكانية عرض لاكي",
+        "expected_value": "لا",
+        "actual_value": "لا",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "التأمين مش بيغطي الفحص اللي هعمله، هينفع اخد لاكي؟",
+    "expected_fact": "الحالة: فحص غير مُغطّى تأمينياً. امكانية عرض لاكي: لا",
+    "expected_behavior": "Should say no, lucky card does not apply when the specific exam isn't covered by insurance.",
+    "session_id": "7b363b31-ee1f-4101-928c-5612b08ca695",
+    "actual_reply": "للأسف يا فندم مش بنقدر نعرض لاكي، المعلومة دي مش متوفرة عندي. تحب أحولك لزميل يأكدلك التفاصيل دي؟",
+    "debug_json": {
+      "امكانية عرض لاكي": "لا"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الحالة",
+        "expected_value": "فحص غير مُغطّى تأمينياً",
+        "result": "key_not_found"
+      },
+      {
+        "label": "امكانية عرض لاكي",
+        "expected_value": "لا",
+        "actual_value": "لا",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "رصيد تأميني خلص وهدفع كاش، هاخد لاكي؟",
+    "expected_fact": "الحالة: عميل رصيده التأميني منتهي ويدفع كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card applies when the insurance balance is exhausted and the patient is paying cash.",
+    "session_id": "85abbcd5-9141-4a1a-9938-11f7a91c3b85",
+    "actual_reply": "أيوه يا فندم، لو رصيدك التأميني خلص وتقرر تدفع كاش، نقدر نعرض عليك اللاكي عادي. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "امكانية عرض لاكي": "نعم"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الحالة",
+        "expected_value": "عميل رصيده التأميني منتهي ويدفع كاش",
+        "result": "key_not_found"
+      },
+      {
+        "label": "امكانية عرض لاكي",
+        "expected_value": "نعم",
+        "actual_value": "نعم",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "أنا مش عندي تأمين طبي خالص، أقدر اخد كارت لاكي؟",
+    "expected_fact": "الحالة: عميل بدون تأمين طبي. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card is available for patients with no medical insurance at all.",
+    "session_id": "88ec1fc7-031d-4bc8-8e0d-9788f5225c20",
+    "actual_reply": "أيوه يا فندم، لو حضرتك من غير تأمين طبي نقدر نعرض عليك كارت لاكي عادي. تحب أحجزلك ميعاد؟",
+    "debug_json": [
+      {
+        "source": 1,
+        "fields": {
+          "الحالة": "عميل بدون تأمين طبي",
+          "امكانية عرض لاكي": "نعم"
+        }
+      },
+      {
+        "source": 2,
+        "fields": {}
+      },
+      {
+        "source": 3,
+        "fields": {}
+      },
+      {
+        "source": 4,
+        "fields": {}
+      },
+      {
+        "source": 5,
+        "fields": {}
+      }
+    ],
+    "verdict": "PASS",
+    "checked_pairs": [
+      {
+        "label": "الحالة",
+        "expected_value": "عميل بدون تأمين طبي",
+        "actual_value": "عميل بدون تأمين طبي",
+        "result": "match"
+      },
+      {
+        "label": "امكانية عرض لاكي",
+        "expected_value": "نعم",
+        "actual_value": "نعم",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "every extractable expected pair matched exactly"
+  },
+  {
+    "sheet_name": "حالات عرض كارت لاكي",
+    "patient_query": "عندي تأمين بس عايز ادفع كاش، هاخد لاكي برضه؟",
+    "expected_fact": "الحالة: عميل لديه تأمين وطلب الفحص كاش. امكانية عرض لاكي: نعم",
+    "expected_behavior": "Should say yes — lucky card still applies even if the patient has insurance but chooses to pay cash for this exam.",
+    "session_id": "90194e4d-ad38-4b9d-b76f-2b0a3590d6e3",
+    "actual_reply": "أيوه يا فندم، لو معاك تأمين وعايز تدفع كاش، تقدر تاخد اللاكي عادي. تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "امكانية عرض لاكي": "نعم"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "الحالة",
+        "expected_value": "عميل لديه تأمين وطلب الفحص كاش",
+        "result": "key_not_found"
+      },
+      {
+        "label": "امكانية عرض لاكي",
+        "expected_value": "نعم",
+        "actual_value": "نعم",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "نسبة كاش باك كارت لاكي على التحاليل قد ايه بالظبط؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: التحاليل. النسبه: 0.15",
+    "expected_behavior": "Should state the cashback rate on lab tests is 15% (0.15). Note: this sheet only has 2 rows total in the whole database, both included here.",
+    "session_id": "ccffde88-e1bb-4824-b5d5-e21349dbad4c",
+    "actual_reply": "معلومة نسبة الكاش باك بتاعة كارت لاكي مش متوفرة عندي هنا يا فندم، تحب أساعدك في حاجة تانية؟",
+    "debug_json": {},
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "النوع",
+        "expected_value": "التحاليل",
+        "result": "key_not_found"
+      },
+      {
+        "label": "النسبه",
+        "expected_value": "0.15",
+        "result": "key_not_found"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  },
+  {
+    "sheet_name": "Sheet1",
+    "patient_query": "طيب نسبة الكاش باك على الأشعة كام؟",
+    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: الاشعه. النسبه: 0.25",
+    "expected_behavior": "Should state the cashback rate on radiology exams is 25% (0.25).",
+    "session_id": "51832401-fc39-4883-bd6f-aef8f650ec8c",
+    "actual_reply": "نسبة الكاش باك 0.25 يا فندم، تحب أحجزلك ميعاد؟",
+    "debug_json": {
+      "النسبه": "0.25"
+    },
+    "verdict": "NEEDS_REVIEW",
+    "checked_pairs": [
+      {
+        "label": "النوع",
+        "expected_value": "الاشعه",
+        "result": "key_not_found"
+      },
+      {
+        "label": "النسبه",
+        "expected_value": "0.25",
+        "actual_value": "0.25",
+        "result": "match"
+      }
+    ],
+    "verdict_reason": "some expected fields weren't found in debug_json (label-wording mismatch or model omission — can't tell which)"
+  }
+]

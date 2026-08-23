@@ -84,10 +84,10 @@ class Settings(BaseSettings):
     # rented GPU box) — the app code never knows or cares which, only that
     # the URL is reachable (claude.md §6.3 Ports & Adapters).
     # models => nile-chat-12b, falcon-h1-34b
-    GENERATION_BACKEND_LITERAL: List[str] = ["nile-chat-12b"]
-    GENERATION_BACKEND: str = "nile-chat-12b"
+    GENERATION_BACKEND_LITERAL: List[str] = ["NILE_CHAT_12B"]
+    GENERATION_BACKEND: str = "NILE_CHAT_12B"
     GENERATION_BASE_URL: str
-    GENERATION_MODEL_NAME: str = "nile-chat-12b"
+    GENERATION_MODEL_NAME: str = "raylab-nilechat-finetuned"
     # Raised 30 -> 120 during Phase 0's bake-off (see README/.env.example)
     # — real traffic against a --enforce-eager, tunneled 34B candidate
     # showed 5/67 turns exceeding 30s purely on inference latency.

@@ -130,6 +130,25 @@ class ChunkModel(BaseDataModel):
             await session.execute(text("ANALYZE knowledge_chunks;"))
             await session.commit()
 
+    async def get_distinct_source_files(self, client_id: str) -> list[str]:
+        """Every distinct source_file currently represented in
+        knowledge_chunks for this client. Full-mirror sync (claude.md
+        §2.3) needs this to diff against what OneDrive's folder listing
+        currently returns — a source_file present here but absent from
+        that listing means the file was deleted from OneDrive and its
+        chunks are now orphaned (tasks/onedrive_sync.py)."""
+        async with self.db_client() as session:
+            stmt = (
+                select(KnowledgeChunk.source_file)
+                .where(
+                    KnowledgeChunk.client_id == client_id,
+                    KnowledgeChunk.source_file.isnot(None),
+                )
+                .distinct()
+            )
+            result = await session.execute(stmt)
+            return [row[0] for row in result.all()]
+
     async def get_all_chunks(self, client_id: str) -> list[KnowledgeChunk]:
         """Every chunk for this client, unfiltered by embedding state —
         Step 8's shootout uses this to build each candidate's own
