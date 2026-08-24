@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -7,6 +7,15 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     session_id: UUID
     message: str
+    # Frontend brand-filter selector. None (omitted) means "no change this
+    # turn" — the session keeps whatever brand_filter it already had
+    # (utils/session_store.py's own persisted state), so the frontend
+    # doesn't have to resend the current selection on every message.
+    # "all" is an explicit clear, distinct from omitting the field —
+    # session_state["brand_filter"] itself is None for "all", but a
+    # patient actively switching back to "All" needs its own signal,
+    # not just silence.
+    brand_filter: Optional[Literal["technoscan", "cairoscan", "all"]] = None
 
 
 class ChatResponse(BaseModel):

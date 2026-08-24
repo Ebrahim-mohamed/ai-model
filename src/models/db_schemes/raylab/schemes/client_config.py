@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Float, Integer, String
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from .raylab_base import SQLAlchemyBase
 
@@ -123,3 +123,22 @@ class ClientConfig(SQLAlchemyBase):
     # unpredictable, but not perfect.
     whatsapp_breadth_score_threshold = Column(Float, nullable=False, server_default="0.0")
     whatsapp_breadth_score_gap = Column(Float, nullable=False, server_default="0.3")
+
+    # Config-driven, VALUE-matched brand promotion to top-level metadata
+    # (claude.md §1.3 — never a hardcoded column/sheet name in a
+    # controller). Superseded label-keyed metadata_promotion_map after
+    # real data showed brand info appears under 4 different column
+    # spellings (account/Account/Accounts/Acoount) across 5 sheets, in 2
+    # different scripts (Examinations: English "Technoscan"/"Cairoscan";
+    # Branch Directory/Sheet1/Weights/Anesthesia: Arabic
+    # "تكنوسكان"/"كايروسكان") — a label-keyed map breaks on the very next
+    # sheet that spells the column yet another way. This maps real brand
+    # VALUES (in either language) to one canonical lowercase value.
+    # ChunkingController scans every field's value, not its column name,
+    # against this map — so a brand-new sheet with the same column under
+    # any other spelling is picked up automatically, zero code/config
+    # change. Only the business vocabulary itself (a genuinely new brand,
+    # or a new way of writing an existing one) needs a one-time edit here
+    # — the same boundary claude.md §3.1 already draws everywhere else
+    # (never infer business semantics automatically).
+    brand_value_aliases = Column(JSONB, nullable=False, server_default="{}")

@@ -32,10 +32,22 @@ class IntentRoutingController(BaseController):
         self.session_store = session_store
         self.template_parser = TemplateParser()
 
-    async def route_turn(self, client_id: str, session_id, modality: str, text: str) -> dict:
+    async def route_turn(
+        self, client_id: str, session_id, modality: str, text: str, brand_filter: str | None = None,
+    ) -> dict:
         session_state = await self.session_store.get_or_hydrate_session(
             client_id, session_id, self.chat_history_model,
         )
+
+        # Applied once, right here, immediately after hydration — the same
+        # place session_state is already read and (at the end of this
+        # method) persisted, so the write path isn't scattered across
+        # callers. None (the route's own default when the field is
+        # omitted from the request) means "no change this turn" — the
+        # session keeps whatever brand_filter it already had. "all" is an
+        # explicit clear, distinct from silence.
+        if brand_filter is not None:
+            session_state["brand_filter"] = None if brand_filter == "all" else brand_filter
 
         # Real worked examples (a broad "what do you offer" question, an
         # out-of-scope medical question) — the bare closed-set label list

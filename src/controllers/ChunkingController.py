@@ -31,12 +31,30 @@ class ChunkingController(BaseController):
     selection (FieldSelectionController) can hand the LLM one already-
     isolated fact instead of asking it to blindly re-parse the flattened
     string it was itself flattened from.
+
+    Metadata promotion (brand filtering): matches by VALUE, not column
+    name — client_config.brand_value_aliases maps real brand strings (in
+    either language the source data uses) to one canonical lowercase
+    value, e.g. {"Technoscan": "technoscan", "تكنوسكان": "technoscan"}.
+    Real data showed brand info lives under 4 different column spellings
+    (account/Account/Accounts/Acoount) across 5 sheets, in 2 different
+    scripts — a label-keyed match breaks on the next sheet that spells the
+    column yet another way; a value-keyed match doesn't care what the
+    column is called or which sheet it's on. Every non-empty field's
+    value is checked against the alias map; the first match promotes
+    metadata["brand"] to the canonical value. A row with no field whose
+    value is a known brand alias gets no "brand" key at all — never a
+    null placeholder. Never a hardcoded column/sheet name here (claude.md
+    §1.3) — a brand-new sheet, under any spelling, is picked up
+    automatically; only the business vocabulary itself (a genuinely new
+    brand) needs a one-time client_config edit.
     """
 
-    def __init__(self, staging_row_model, schema_registry_model):
+    def __init__(self, staging_row_model, schema_registry_model, client_config_model):
         super().__init__()
         self.staging_row_model = staging_row_model
         self.schema_registry_model = schema_registry_model
+        self.client_config_model = client_config_model
 
     async def chunk_source_file(self, client_id: str, source_file: str) -> list[KnowledgeChunk]:
         """Builds (but does not persist) every chunk for this client's
@@ -49,6 +67,16 @@ class ChunkingController(BaseController):
             rows_by_sheet.setdefault(row.sheet_name, []).append(row)
 
         file_label = os.path.splitext(source_file)[0] if source_file else ""
+
+        client_config = await self.client_config_model.get_client_config(client_id)
+        raw_aliases = (client_config.brand_value_aliases if client_config else None) or {}
+        # Case-insensitive lookup built once per file, not per row: real
+        # data showed the source sheets aren't even internally consistent
+        # in casing (Examinations is "Cairoscan" almost everywhere, but one
+        # real row has "cairoscan" already lowercase) — matching case-
+        # insensitively covers any future casing variant automatically,
+        # rather than needing a new literal alias entry per casing seen.
+        brand_value_aliases = {alias.lower(): canonical for alias, canonical in raw_aliases.items()}
 
         chunks: list[KnowledgeChunk] = []
         for sheet_name, sheet_rows in rows_by_sheet.items():
@@ -70,6 +98,7 @@ class ChunkingController(BaseController):
                     "sheet_name": sheet_name,
                     "source_file": source_file,
                     "field_data": fields,
+                    **self._promote_brand_metadata(fields, brand_value_aliases),
                 }
 
                 # Step 1: concatenate every non-empty field, in schema order.
@@ -110,6 +139,29 @@ class ChunkingController(BaseController):
 
     def _concatenate_fields(self, fields: dict) -> str:
         return ". ".join(f"{column}: {value}" for column, value in fields.items())
+
+    def _promote_brand_metadata(self, fields: dict, brand_value_aliases: dict) -> dict:
+        """Scans every non-empty field's VALUE (never its column name —
+        claude.md §1.3) against `brand_value_aliases` (already lowercased-
+        keyed by the caller). The first field whose stripped+lowercased
+        value matches a known brand alias — in whichever language, casing,
+        or spelling the source sheet happens to use — promotes
+        metadata["brand"] to the map's canonical value. `fields` preserves
+        schema column order (see _extract_non_empty_fields), so "first
+        match" is deterministic, not incidental. A row with no matching
+        value contributes nothing — never a null placeholder.
+        Real, disclosed limitation: this can't distinguish "a column that
+        legitimately means brand" from "some unrelated column whose value
+        happens to equal a known brand string" — a real but low-probability
+        risk given brand names are specific proper nouns, not a risk this
+        method silently hides."""
+        if not brand_value_aliases:
+            return {}
+        for value in fields.values():
+            normalized = str(value).strip().lower()
+            if normalized in brand_value_aliases:
+                return {"brand": brand_value_aliases[normalized]}
+        return {}
 
     def _infer_columns(self, rows: list) -> list[str]:
         """Fallback only — schema_registry should always have a row by the

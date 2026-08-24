@@ -210,6 +210,12 @@ def _looks_failed(actual_reply) -> bool:
 def _send_one(url: str, headers: dict, timeout: int, case: dict) -> dict:
     session_id = str(uuid.uuid4())
     body = {"session_id": session_id, "message": case["patient_query"]}
+    # Only present on the brand-filter test cases (routes/schemes/whatsapp.py's
+    # ChatRequest.brand_filter) — omitted entirely for every ordinary case, so
+    # session_state["brand_filter"] stays untouched (None = no change this turn)
+    # exactly as it would for a real unfiltered patient turn.
+    if case.get("brand_filter"):
+        body["brand_filter"] = case["brand_filter"]
     try:
         response = requests.post(url, headers=headers, json=body, timeout=timeout)
         response.raise_for_status()

@@ -321,10 +321,16 @@ class TextReplyController(BaseController):
         history = session_state.get("history", [])
         client_config = await self.client_config_model.get_client_config(client_id)
 
+        # "brand" — not "Account" — matches ChunkingController's real,
+        # promoted top-level metadata key (value-matched against
+        # client_config.brand_value_aliases at chunk time, canonical
+        # lowercase). "Account" was never a real, filterable metadata
+        # key — it only ever existed nested inside field_data, under 4
+        # different spellings depending on the sheet.
         brand_filter = session_state.get("brand_filter")
         metadata_filters = None
-        if brand_filter and "Account" in (client_config.allowed_metadata_keys or []):
-            metadata_filters = {"Account": brand_filter}
+        if brand_filter and "brand" in (client_config.allowed_metadata_keys or []):
+            metadata_filters = {"brand": brand_filter}
 
         # Retrieve at the broad ceiling unconditionally, first — breadth
         # is now decided FROM these results' own score distribution, not

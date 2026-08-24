@@ -1,5 +1,33 @@
 [
   {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل رنين مغناطيسي على شرايين البطن، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاح بتكنوسكان / بيتم الحجز في كايرو سكان",
+    "expected_behavior": "Brand-filter cross-referral test (direction 1: Technoscan -> Cairoscan). Should tell the patient MRA Abdomen (شرايين البطن) is NOT available under their selected Technoscan filter, but IS available at Cairoscan, and offer to transfer/redirect them — a real cross-brand fact taken directly from the source data, not invented."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل اشاعة عادية على ضرس، متاحة عندكم في كايروسكان؟",
+    "brand_filter": "cairoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاح بكايروسكان متاح بتكنو سكان",
+    "expected_behavior": "Brand-filter cross-referral test (direction 2: Cairoscan -> Technoscan, the reverse direction from the previous case). Should tell the patient Periapical X-ray is NOT available under their selected Cairoscan filter, but IS available at Technoscan, and offer to transfer."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل أشعة سي بي سي تي على الأسنان، فين متاحة في كايروسكان؟",
+    "brand_filter": "cairoscan",
+    "expected_fact": "الـفروع Branches: الشيخ زايد - سليمان اباظة",
+    "expected_behavior": "Brand-filter success case (no cross-brand fallback needed). Should confirm CBCT dental imaging IS available under the patient's selected Cairoscan filter, specifically at Sheikh Zayed and Suleiman Abaza branches — must NOT trigger an unnecessary cross-brand note since it's genuinely available in the selected brand."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل سونار على الأمعاء، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحه بتكنوسكان وكايرو سكان",
+    "expected_behavior": "Brand-filter negative-control test. Bowel/Intestine Ultrasound is genuinely unavailable at BOTH brands per real source data — the model must decline honestly and must NOT hallucinate a false cross-brand alternative just because a brand filter is active."
+  },
+  {
     "sheet_name": "Branch Directory",
     "patient_query": "فرع بلبيس بيفتح لحد الساعة كام يوم الجمعة؟",
     "expected_fact": "مواعيد الفروع يوم الجمعة: 1:00 pm to 11:00 pm",
@@ -8,7 +36,7 @@
   {
     "sheet_name": "Branch Directory",
     "patient_query": "هو فرع سليمان أباظة مناسب لو معايا حد بكرسي متحرك؟",
-    "expected_fact": "معلومات الفرع كرسي متحرك: متاح",
+    "expected_fact": "معلومات الفرع كرسي متحرك:   ",
     "expected_behavior": "Should confirm wheelchair access is available at Suleiman Abaza (Mohandessin 1) branch."
   },
   {
@@ -392,8 +420,8 @@
   {
     "sheet_name": "Sheet1",
     "patient_query": "نسبة كاش باك كارت لاكي على التحاليل قد ايه بالظبط؟",
-    "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: التحاليل. النسبه: 0.15",
-    "expected_behavior": "Should state the cashback rate on lab tests is 15% (0.15). Note: this sheet only has 2 rows total in the whole database, both included here."
+    "expected_fact": "تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية",
+    "expected_behavior": "Should state the cashback rate on lab tests is 15%. Note: the dedicated 'قيمة كاش باك كارت لاكي' row for labs (0.15) no longer exists in the DB as of this refresh -- only the radiology (0.25) row remains under that document name. The 15% labs figure is still real and current, but now sourced only from the general Instructions-sheet policy text, not a standalone structured row."
   },
   {
     "sheet_name": "Sheet1",

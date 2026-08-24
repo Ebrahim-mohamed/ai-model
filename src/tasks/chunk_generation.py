@@ -30,6 +30,7 @@ async def _generate_chunks(task_instance, client_id: str, source_file: str):
         controller = ChunkingController(
             staging_row_model=setup["staging_row_model"],
             schema_registry_model=setup["schema_registry_model"],
+            client_config_model=setup["client_config_model"],
         )
 
         chunks = await controller.chunk_source_file(client_id=client_id, source_file=source_file)

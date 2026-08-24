@@ -26,6 +26,7 @@ async def chat(body: ChatRequest, request: Request, x_admin_api_key: str = Heade
         session_id=body.session_id,
         modality="text",
         text=body.message,
+        brand_filter=body.brand_filter,
     )
 
     return ChatResponse(
