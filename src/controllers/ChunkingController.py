@@ -27,10 +27,14 @@ class ChunkingController(BaseController):
     dict (built from it, never a separate parallel computation), so the
     flattened text and the structured field data can never disagree about
     which fields exist for a given row. field_data is stored, not
-    embedded/indexed — it exists purely so generation-time field
-    selection (FieldSelectionController) can hand the LLM one already-
-    isolated fact instead of asking it to blindly re-parse the flattened
-    string it was itself flattened from.
+    embedded/indexed — not for generation-time field pre-selection
+    anymore (FieldSelectionController was deleted 2026-08-25; the
+    fine-tuned model now makes that judgment itself from the full
+    `content`, see TextReplyController._narrow_context_block), but it
+    remains real, live-consumed structure: scripts/finetune_data/
+    sampling.py's entire training-data pipeline is built on it, and it's
+    the ground truth ReplyVerificationController's grounding check
+    validates the model's own JSON output against.
 
     Metadata promotion (brand filtering): matches by VALUE, not column
     name — client_config.brand_value_aliases maps real brand strings (in

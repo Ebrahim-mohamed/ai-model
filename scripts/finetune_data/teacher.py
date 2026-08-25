@@ -268,6 +268,18 @@ DISTILLATION_ADDENDUM = "\n".join([
     "المفاتيح المذكورة في 'JSON KEYS ALLOWED' — ممنوع نهائيًا تخترعي "
     "مفتاح جديد، تترجميه، أو تغيّري صياغته. القيم كمان لازم تتنسخ حرفيًا "
     "من الـ CONTEXT، من غير أي تقريب أو إعادة صياغة.",
+    "قاعدة صارمة للقيم الطويلة (2026-08-25): لو القيمة الحقيقية لمفتاح "
+    "طويلة أو بتحتوي على أكتر من جملة أو أكتر من سطر، لازم تتنسخ "
+    "**كاملة بالظبط** زي ما هي في الـ CONTEXT — حرف بحرف، حتى لو جزء "
+    "منها مش مرتبط مباشرة بالسؤال اللي هتخترعيه. ممنوع نهائيًا تاخدي "
+    "أول جملة بس، تختصري، أو تقتطعي أي جزء من القيمة. لو حسيتي إن جزء "
+    "بس من القيمة هو المرتبط بالسؤال، عندك خيارين بس: (أ) انسخي القيمة "
+    "**كاملة** زي ما هي رغم كده، أو (ب) متختاريش المفتاح ده خالص في "
+    "'JSON KEYS ALLOWED' من الأساس — أبدًا متنسخيش نص القيمة. نفس الكلام "
+    "على التنسيق: أي فاصلة سطر (line break) جوه القيمة الأصلية لازم "
+    "تفضل زي ما هي بالظبط في الـ JSON — ممنوع تستبدليها بمسافة، تشيليها، "
+    "أو تضيفي/تشيلي أي علامة ترقيم (زي نقطة في الآخر) مش موجودة في "
+    "النص الأصلي حرفيًا.",
     "أي جزء 'نص طبيعي' (الرد بالعامية) لازم يكون مبني فقط على المعلومات "
     "الموجودة في بلوك الـ JSON اللي كتبتيه هي نفسها — ممنوع تضيفي أي "
     "حقيقة، رقم، أو تفصيلة مش موجودة فيه.",
@@ -309,6 +321,27 @@ GENERATE_QUESTION_TASK = "\n".join([
     "<الصياغة الطبيعية هنا>",
 ])
 
+GENERATE_COMPOUND_QUESTION_TASK = "\n".join([
+    "## TASK:",
+    "اخترعي سؤال طبيعي واحد بس، بصياغة مختلفة في كل مرة، ممكن مريض حقيقي "
+    "يبعته على واتساب، لكن لازم يسأل فيه عن حاجتين أو تلاتة مختلفين مع "
+    "بعض من المعلومات الموجودة في الـ CONTEXT ده — مش سؤال عن حاجة واحدة "
+    "بس. لازم يكون سؤال طبيعي متسلسل زي ما مريض حقيقي هيكتبه (مثلاً بيسأل "
+    "عن التحضيرات المطلوبة ومعاد استلام التقرير مع بعض)، مش مجرد سؤالين "
+    "منفصلين ملزّقين ببعض بعلامة 'و'. بعدين جاوبي على السؤال ده بنفس "
+    "القواعد المذكورة فوق. اكتبي ردك بالظبط بالشكل ده:",
+    "",
+    "## PATIENT QUESTION:",
+    "<السؤال هنا>",
+    "",
+    "## JSON:",
+    "```json",
+    "<JSON هنا>",
+    "```",
+    "",
+    "<الصياغة الطبيعية هنا>",
+])
+
 ANSWER_GIVEN_QUESTION_TASK = "\n".join([
     "## TASK:",
     "جاوبي على 'PATIENT MESSAGE' تحت، باستخدام الـ CONTEXT المتاح فقط، "
@@ -323,18 +356,34 @@ ANSWER_GIVEN_QUESTION_TASK = "\n".join([
 ])
 
 
-def build_generation_prompt(*, context_text: str, allowed_keys_description: str) -> str:
+def build_generation_prompt(*, context_text: str, allowed_keys_description: str, compound: bool = False) -> str:
     """Pass 1 (Narrow) / Pass 2 (Broad) Positive: the teacher invents the
     patient question itself. A hardcoded Python question template per
     field label isn't viable here (16 real sheets' worth of real Arabic
     field names, unknown at code-writing time — and a fixed template
     string would itself violate the no-hardcoding rule) and wouldn't
     serve anti-memorization as well as a genuinely-varied, LLM-generated
-    question does."""
+    question does.
+
+    compound=True (Pass 1's multi-field slice only — Pass 2 never passes
+    this, so its own broad-positive prompt shape is unchanged): the
+    teacher is told it may/must select MORE than one key from
+    allowed_keys_description, and must invent a question that genuinely
+    needs all of them — never a fixed count, never padded. This is what
+    teaches the model, at inference time, to decide FOR ITSELF how many
+    fields a real question needs from the full chunk it's handed, now
+    that nothing upstream (no FieldSelectionController) tells it in
+    advance."""
+    keys_instruction = (
+        "لازم تختاري بالظبط المفاتيح اللي السؤال اللي هتخترعيه محتاجها فعلاً — ٢ أو ٣ "
+        "مفاتيح من دول (حسب طبيعة السؤال)، منسوخة حرفيًا زي ما هي، من غير اختراع مفتاح جديد"
+        if compound else
+        "المفتاح لازم يكون واحد بالظبط من دول، منسوخ حرفيًا"
+    )
     return "\n\n".join([
         f"## CONTEXT:\n{context_text}",
-        f"## JSON KEYS ALLOWED (المفتاح لازم يكون واحد بالظبط من دول، منسوخ حرفيًا):\n{allowed_keys_description}",
-        GENERATE_QUESTION_TASK,
+        f"## JSON KEYS ALLOWED ({keys_instruction}):\n{allowed_keys_description}",
+        GENERATE_COMPOUND_QUESTION_TASK if compound else GENERATE_QUESTION_TASK,
     ])
 
 

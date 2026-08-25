@@ -1,0 +1,22 @@
+{
+  "raylab_finetune_train": {
+    "file_name": "/mnt/d/Raylab_Project/scripts/finetune_data_out/train.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output",
+      "system": "system",
+      "history": "history"
+    }
+  },
+  "raylab_finetune_val": {
+    "file_name": "/mnt/d/Raylab_Project/scripts/finetune_data_out/val.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output",
+      "system": "system",
+      "history": "history"
+    }
+  }
+}

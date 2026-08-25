@@ -25,10 +25,25 @@ def format_record(record: dict) -> dict:
     output_json_text = json.dumps(record["output_json"], ensure_ascii=False)
     output = f"```json\n{output_json_text}\n```\n\n{record['output_phrasing']}"
 
+    # 2026-08-25: LLaMA-Factory's real Alpaca converter renders the user
+    # turn as "\n".join([instruction, input]) — instruction column FIRST,
+    # input column SECOND (verified against its actual source, not
+    # assumed) — while production's real user turn
+    # (TextReplyController._mode_a_reply's user_sections) is
+    # "CONTEXT:\n{context}\n\nPATIENT MESSAGE:\n{question}", context
+    # first, neither section unlabeled. Swapping which value goes in
+    # which Alpaca column, and baking in the same literal labels
+    # production always includes, makes the rendered training turn match
+    # what the model actually receives at inference — record['input'] (the
+    # real chunk/context) goes into the "instruction" column so it lands
+    # first, record['instruction'] (the real patient question) goes into
+    # "input" so it lands second. Purely a presentation fix — neither
+    # field's underlying content changes, only which Alpaca column carries
+    # it and the labels wrapping each.
     return {
         "system": system_prompt,
-        "instruction": record["instruction"],
-        "input": record["input"],
+        "instruction": f"CONTEXT:\n{record['input']}",
+        "input": f"PATIENT MESSAGE:\n{record['instruction']}",
         "output": output,
         "history": [],
     }

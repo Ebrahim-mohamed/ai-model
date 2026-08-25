@@ -48,7 +48,38 @@ from . import checkpoint, teacher
 
 FIXED_SEED = 101  # same seed llm_finetuning.ipynb uses (random.Random(101).shuffle)
 NARROW_VARIATIONS_PER_LABEL = 3  # anti-memorization: distinct real chunk instances per field label
+COMPOUND_FRACTION = 0.4  # 2026-08-24 redesign: share of narrow_positive candidates trained as
+# multi-field (2-3 key) extraction from the FULL chunk, now that FieldSelectionController is being
+# removed from production — the model must learn to decide for itself how many fields a question
+# needs, not just extract one pre-selected field. The other 60% stay single-field so that
+# already-proven behavior isn't diluted. Applied per-candidate via a dedicated seeded RNG so the
+# single/compound assignment is reproducible across resumed runs (see run_pass1_narrow_positive).
 BROAD_PROBES_PER_SHEET = 4  # bumped 2->4 to address narrow/broad category imbalance — doubles broad_positive's target (~28 -> ~56) without touching narrow_positive
+MIN_LABEL_OCCURRENCES_FOR_GENERICNESS_CHECK = 20  # below this, too few real samples to judge a
+# label's genericness either way — keep it eligible by default rather than risk excluding a rare,
+# genuinely specific field on small-sample noise.
+CROSS_REFERRAL_DISCLAIMER_THRESHOLD = 0.6  # 2026-08-25: real measurement (docker exec psql) against
+# raylab's actual brand-tagged chunks — 181/1094 real chunks have >=60% of their OWN field_data
+# values byte-identical to each other, the structural signature of a single blanket note (real,
+# manually-confirmed via sampling: a cross-brand availability disclaimer — "not available under
+# this brand, available under the sibling brand" — repeated across most of a row's fields)
+# dominating that row. Detected dynamically, per chunk, never keyed on brand-specific text or a
+# hardcoded sheet name — this generalizes to Examinations, Sheet1, Branch Directory, Weights,
+# Anesthesia, or any future sheet/disclaimer pattern the same way.
+MAX_CROSS_REFERRAL_SEEDS_PER_BRAND_SHEET = 3  # capped like NARROW_VARIATIONS_PER_LABEL — per
+# (brand, sheet_name) group, so a sheet with many disclaimer-dominated rows (Examinations has the
+# most) doesn't crowd out representation of the others.
+MAX_GENERIC_LABEL_DISTINCT_RATIO = 0.08  # 2026-08-25: real measurement against raylab's actual
+# field_data (docker exec psql, not guessed) — distinct(value)/count(*) per label. Operational
+# boilerplate labels cluster well below this (Acoount/account variants 0.5-3%, نوع الاشعه 2.4%,
+# تعليمات الحضور — the exact field whose real invented questions were observed retrieving a CBCT
+# chunk, an H. Pylori stool test, and a Branch Directory entry for a Cervical Spine seed, all
+# correctly caught as safe absence examples by Phase 2/1b but at real, avoidable teacher-call
+# cost — at 6.3%), while labels with genuine per-row variation sit comfortably above it (موعد
+# استلام التقرير 10.5%, package/pricing fields 12%+). See run_pass1_narrow_positive's diversity
+# sampling for where this excludes a label from SEEDING ONLY — never from a chunk's real content,
+# retrieval, or what the model can be asked about in production (unrelated to §3.8's own boilerplate-
+# exclusion reversal, which was about not hiding real content from retrieval; this never does that).
 ABSENCE_COUNT = 60
 AMBIGUOUS_DIRECT_COUNT = 30
 AMBIGUOUS_CROSS_CHUNK_COUNT = 20
@@ -78,6 +109,9 @@ class ChunkRecord:
     field_data: dict
     sheet_name: str | None
     source_file: str | None
+    brand: str | None  # ChunkingController's own promoted top-level metadata key (§3.5 brand-value-
+    # aliases), never re-derived here — the same real value RetrievalController's metadata_filters
+    # would match on. None for the ~48% of chunks with no brand-bearing field at all.
 
 
 def _base_system_prompt() -> str:
@@ -88,6 +122,119 @@ def _base_system_prompt() -> str:
 def _write_record(out_path, record: dict) -> None:
     with open(out_path, "a", encoding="utf-8") as dest:
         dest.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _load_jsonl(path) -> list[dict]:
+    if not path.exists():
+        return []
+    records = []
+    with open(path, encoding="utf-8") as source:
+        for line in source:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+def _load_resolved_source_ids(paths) -> set[str]:
+    """Every narrow_hypothesis custom_id whose real-retrieval
+    classification (Pass 1's Phase 2/1b, see run_pass1_narrow_positive)
+    has already been durably finalized in a prior run — via a direct
+    accept/reattribution (written to out_path with
+    source_hypothesis_custom_id == its own custom_id), a correction-batch
+    result (out_path or absence_out_path, both stamp
+    source_hypothesis_custom_id), or a zero-retrieval discard
+    (discarded_path). Checked before Phase 2 re-runs real retrieval for a
+    hypothesis, so a resumed run doesn't re-query already-resolved ones."""
+    resolved: set[str] = set()
+    for path in paths:
+        for record in _load_jsonl(path):
+            source_id = record.get("source_hypothesis_custom_id") or record.get("custom_id")
+            if source_id:
+                resolved.add(source_id)
+    return resolved
+
+
+def _field_data_matches(candidate_json, field_data: dict) -> bool:
+    """True when every key/value in candidate_json is present, byte-exact,
+    in field_data. The same deterministic equality grounding_gate.py's
+    _check_keys_and_values uses, duplicated here rather than imported —
+    this is a Stage-1-time local classification helper (does a real
+    near-duplicate chunk still support this hypothesis's answer?), not a
+    Stage-5 QA gate, and Stage 5 documents itself as deliberately
+    dependency-free; the two stay independent on purpose."""
+    if not isinstance(candidate_json, dict) or not candidate_json:
+        return False
+    for key, value in candidate_json.items():
+        if key not in field_data or str(field_data[key]).strip() != str(value).strip():
+            return False
+    return True
+
+
+def _detect_cross_referral_seeds(
+    working_set: list[ChunkRecord], *, threshold: float, max_per_brand_sheet: int,
+) -> list[ChunkRecord]:
+    """Real, dynamic detection of "disclaimer-dominated" chunks — rows
+    where a high fraction of the chunk's OWN field_data values are
+    byte-identical to each other, regardless of what the shared text
+    actually says or which sheet the row is on (see
+    CROSS_REFERRAL_DISCLAIMER_THRESHOLD's own real-measurement note).
+    These are guaranteed inclusion as Pass 1 seeds, capped per (brand,
+    sheet_name) group — by-label diversity sampling usually wouldn't pick
+    them (a single field label spread across hundreds of chunks rarely
+    lands on the one disclaimer-heavy row by chance), and leaving them to
+    chance is exactly what silently produced zero training coverage of
+    real cross-brand-referral behavior before this fix. Chunks with no
+    brand at all are skipped — this scenario is specifically about
+    brand-restricted retrieval, which only applies to brand-tagged rows."""
+    grouped: dict[tuple, list[ChunkRecord]] = {}
+    for record in working_set:
+        if not record.brand or not record.field_data:
+            continue
+        values = [str(v).strip() for v in record.field_data.values()]
+        mode_count = max(values.count(v) for v in set(values))
+        if mode_count / len(values) >= threshold:
+            grouped.setdefault((record.brand, record.sheet_name), []).append(record)
+
+    selected: list[ChunkRecord] = []
+    for group_records in grouped.values():
+        selected.extend(group_records[:max_per_brand_sheet])
+    return selected
+
+
+def narrow_intermediate_paths(out_path) -> dict:
+    """The three bookkeeping files run_pass1_narrow_positive's Phase
+    1a/2/1b write to, derived from out_path's own directory. Exposed as
+    its own function (not just inlined in run_pass1_narrow_positive) so
+    the orchestration script's --fresh wipe can target the exact same
+    paths — these must never drift apart, or --fresh silently leaves
+    stale intermediate state behind (the real 2026-08-25 bug this fixes:
+    a --fresh run that wipes out_path but not raw_narrow_correction.jsonl
+    causes already-billed corrections to be skipped by the "already done"
+    check without their final write ever landing back in out_path)."""
+    return {
+        "narrow_hypothesis": out_path.parent / "raw_narrow_hypothesis.jsonl",
+        "narrow_correction": out_path.parent / "raw_narrow_correction.jsonl",
+        "narrow_retrieval_discarded": out_path.parent / "raw_narrow_retrieval_discarded.jsonl",
+    }
+
+
+def _write_final_narrow(out_path, hyp: dict, *, content: str, field_data: dict) -> None:
+    """Writes a hypothesis record as final narrow_positive output,
+    unmodified except for which real chunk it's now grounded in — used by
+    both the "confirmed" and "reattributed" branches of Phase 2, whose
+    only difference is which chunk's content/field_data gets passed in."""
+    _write_record(out_path, {
+        "custom_id": hyp["custom_id"],
+        "pass": "narrow_positive",
+        "source_hypothesis_custom_id": hyp["custom_id"],
+        "instruction": hyp["instruction"],
+        "input": content,
+        "output_json": hyp["output_json"],
+        "output_phrasing": hyp["output_phrasing"],
+        "raw_output": hyp["raw_output"],
+        "grounding": {"type": "narrow", "field_data": field_data},
+    })
 
 
 def _use_batch(limit: int | None, force_batch: bool) -> bool:
@@ -197,6 +344,7 @@ async def load_working_set(chunk_model, client_id: str) -> list[ChunkRecord]:
             field_data=dict((chunk.metadata_payload or {}).get("field_data") or {}),
             sheet_name=(chunk.metadata_payload or {}).get("sheet_name"),
             source_file=chunk.source_file,
+            brand=(chunk.metadata_payload or {}).get("brand"),
         )
         for chunk in chunks
         if (chunk.metadata_payload or {}).get("field_data")
@@ -217,73 +365,190 @@ async def load_working_set(chunk_model, client_id: str) -> list[ChunkRecord]:
 # ---------------------------------------------------------------------
 
 async def run_pass1_narrow_positive(
-    *, client, working_set: list[ChunkRecord], cost_tracker, out_path, state_path,
+    *, client, working_set: list[ChunkRecord], retrieval_controller, client_config, client_id: str,
+    cost_tracker, out_path, absence_out_path, state_path,
     limit: int | None = None, force_batch: bool = False,
 ) -> list[str]:
-    """Groups the working set by field label; for each label, samples up
-    to NARROW_VARIATIONS_PER_LABEL DIFFERENT real chunk instances carrying
-    that label — never the same chunk repeated, never padded with
-    synthetic values if fewer real instances exist. This IS the anti-
-    memorization mechanism (a property of how this pass samples, not a
-    bolted-on later step): the same question TEMPLATE never sees a stable
-    fact-value pairing, because the teacher also re-invents the
-    question's exact phrasing every call.
+    """2026-08-25 redesign (Part A of the retrieval-fidelity plan): a
+    hypothesis built from a sampled chunk is never trusted as-is — it's
+    verified against what REAL retrieval would actually hand production
+    for that exact question, and corrected when it wouldn't. Three
+    phases, the first and third each their own Batches-API submission (50%
+    discount preserved — the phase in between is local, non-Claude, so it
+    doesn't break batching):
 
-    Context text is built as the single "label: value" line —
-    TextReplyController._narrow_context_block's own success-path shape
-    (the FieldSelectionController-selected-fields case) — since the
-    question is generated to be ABOUT this exact field, field selection
-    would trivially re-select it; running the real embedding search here
-    would just re-derive what's already guaranteed by construction, at
-    the cost of a chicken-and-egg ordering problem (selection needs a
-    question; the question doesn't exist until after generation). This is
-    a disclosed, deliberate scope simplification for compound (2-field)
-    narrow questions — a future enhancement, not attempted here.
+    Phase 1a (batched) — same diversity sampling as before: walk the
+    working set grouped by field label, take up to
+    NARROW_VARIATIONS_PER_LABEL distinct real chunk instances per label
+    (never the same chunk repeated) so the candidate pool spans many real
+    chunks. This is a DIVERSITY mechanism only — the sampled label doesn't
+    determine the ground-truth key. For each sampled "seed" chunk, the
+    teacher sees its full real `content` and every real field_data key as
+    JSON KEYS ALLOWED, and invents a question needing 1 field (60%) or 2-3
+    co-occurring fields (40%, COMPOUND_FRACTION), then answers it. This is
+    a HYPOTHESIS only — (question, output_json, phrasing) provisionally
+    grounded in the seed chunk — written to its own raw_narrow_hypothesis
+    .jsonl, not yet to out_path.
 
-    Each candidate's custom_id is derived from (chunk_id, label) — real
-    content, not position — so a resumed run recognizes exactly which of
-    these 360-ish candidates it already paid for, however the list is
-    ordered. Returns every generated question EVER written to this pass's
-    raw file (prior runs' plus this run's, loaded straight off disk), for
-    Pass 3/4 to sample mismatched pairings from."""
+    Phase 2 (local, zero Claude cost) — once Phase 1a's batch fully
+    completes, for every hypothesis not already resolved by a prior run
+    (_load_resolved_source_ids), run the question through the REAL
+    RetrievalController.retrieve — the identical call TextReplyController
+    .reply makes, at the same broad-ceiling-first sequence production
+    uses — and classify by the real top result:
+      - same chunk_id as the seed → confirmed; write directly to out_path
+        (the common case, since the question was generated from that
+        chunk's own text).
+      - different chunk_id, but its real field_data still supports the
+        hypothesis's exact output_json (_field_data_matches) → a genuine
+        real near-duplicate (this data has real branch-level repeats);
+        re-point grounding at the actually-retrieved chunk and write to
+        out_path unchanged otherwise.
+      - different chunk_id, real field_data does NOT support it → the
+        actual "wrong chunk" case; flagged for Phase 1b, never discarded.
+      - zero retrieval results → logged to raw_narrow_retrieval_discarded
+        .jsonl. Production routes empty retrieval to the out-of-domain
+        decline path, which never touches JSON extraction — outside this
+        dataset's scope.
+
+    Phase 1b (batched, only the flagged subset — usually a minority, since
+    a question generated FROM a chunk should usually retrieve that same
+    chunk) — reuses the EXISTING build_verification_prompt /
+    ANSWER_GIVEN_QUESTION_TASK mechanism Pass 3 (Absence) already uses:
+    given the real question and the REAL retrieved chunk's real content,
+    the teacher determines the correctly-grounded answer for what
+    retrieval actually returned. Non-empty output_json → written to
+    out_path as a real narrow_positive example, discovered via retrieval
+    rather than by construction. Empty output_json → written to
+    absence_out_path — a real, discovered retrieval-mismatch absence
+    example, complementing (not replacing) Pass 3's synthetic ones.
+
+    Net effect: every record that ends up in out_path is grounded in
+    exactly the chunk real retrieval would hand production for that exact
+    question — never an assumed pairing. Returns every instruction in
+    out_path (prior runs' plus this run's), for Pass 3/4 to sample
+    mismatched pairings from."""
+    intermediate_paths = narrow_intermediate_paths(out_path)
+    hypothesis_path = intermediate_paths["narrow_hypothesis"]
+    correction_path = intermediate_paths["narrow_correction"]
+    discarded_path = intermediate_paths["narrow_retrieval_discarded"]
+
+    # ---- Phase 1a: hypothesis batch ----
     by_label: dict[str, list[ChunkRecord]] = {}
     for record in working_set:
         for label in record.field_data:
             by_label.setdefault(label, []).append(record)
 
-    candidates: list[tuple[str, ChunkRecord]] = [
+    # Exclude near-universally-duplicated "boilerplate" labels from
+    # DIVERSITY SEEDING only (MAX_GENERIC_LABEL_DISTINCT_RATIO) — never
+    # from a chunk's real content, retrieval, or what the model can be
+    # asked about in production. A question invented purely from such a
+    # field carries no chunk-specific signal, so real retrieval can't
+    # reliably return the seed chunk back — it was landing on an
+    # essentially arbitrary sibling instead, wasting the full
+    # hypothesize+retrieve+correct cost on what always resolves to an
+    # absence example Pass 3 already produces directly, far more cheaply.
+    excluded_labels: list[str] = []
+    for label, records in list(by_label.items()):
+        if len(records) < MIN_LABEL_OCCURRENCES_FOR_GENERICNESS_CHECK:
+            continue
+        distinct_values = {str(record.field_data[label]).strip() for record in records}
+        if len(distinct_values) / len(records) <= MAX_GENERIC_LABEL_DISTINCT_RATIO:
+            excluded_labels.append(label)
+            del by_label[label]
+
+    if excluded_labels:
+        print(
+            f"    [narrow_diversity] excluded {len(excluded_labels)} near-universal boilerplate "
+            f"label(s) from seed diversity (distinct-value ratio <= {MAX_GENERIC_LABEL_DISTINCT_RATIO}): "
+            f"{excluded_labels}"
+        )
+
+    # Guaranteed cross-referral seeding (2026-08-25) — real, dynamic
+    # detection (_detect_cross_referral_seeds), not left to chance via
+    # by-label sampling, and independent of the boilerplate-label
+    # exclusion above (a disclaimer-dominated row's dominant field is
+    # sometimes itself an excluded generic label, e.g. تعليمات الحضور —
+    # exclusion only stops it being picked BY THAT LABEL, never stops it
+    # being seeded here). "__cross_referral__" is a pseudo-label, never a
+    # real field name, so it can't collide with by-label custom_ids and
+    # every downstream mechanism (compound-assignment, dedup, mode-2
+    # brand-filtered classification below) treats these uniformly with
+    # everything else. Placed FIRST in `candidates`, ahead of the
+    # (usually much larger) by-label list — a `--limit N` smoke test
+    # truncates from the front, so this is what makes a focused, cheap
+    # smoke test of this exact feature possible at all; otherwise a small
+    # limit could truncate away every cross-referral seed before it's
+    # ever reached.
+    cross_referral_seeds = _detect_cross_referral_seeds(
+        working_set, threshold=CROSS_REFERRAL_DISCLAIMER_THRESHOLD,
+        max_per_brand_sheet=MAX_CROSS_REFERRAL_SEEDS_PER_BRAND_SHEET,
+    )
+    if cross_referral_seeds:
+        groups = {(record.brand, record.sheet_name) for record in cross_referral_seeds}
+        print(
+            f"    [narrow_diversity] added {len(cross_referral_seeds)} guaranteed cross-referral "
+            f"seed(s) across {len(groups)} (brand, sheet) group(s): {sorted(groups)}"
+        )
+
+    candidates: list[tuple[str, ChunkRecord]] = [("__cross_referral__", record) for record in cross_referral_seeds]
+    candidates.extend(
         (label, record)
         for label, records in by_label.items()
         for record in records[:NARROW_VARIATIONS_PER_LABEL]
-    ]
+    )
     if limit is not None:
         candidates = candidates[:limit]
 
-    done_ids = checkpoint.load_done_custom_ids(out_path)
-    new_meta: dict[str, dict] = {}
-    for label, record in candidates:
-        value = record.field_data[label]
-        custom_id = teacher.stable_id("narrow", str(record.chunk_id), label)
-        if custom_id in done_ids:
-            continue
-        new_meta[custom_id] = {"context_text": f"{label}: {value}", "label": label, "value": value}
+    # Deterministic single/compound assignment, walked in the same fixed
+    # candidate order every run (working_set is already seeded-shuffled —
+    # see load_working_set — so this order is itself reproducible) so a
+    # resumed run reassigns the same mode to the same candidate rather
+    # than drawing a fresh coin flip each time. Cross-referral seeds never
+    # draw from mode_rng at all (kept single-fact, matching the real
+    # "is X available under my brand" question shape this scenario
+    # actually has) — despite now sitting first in `candidates`, that
+    # skip means they never consume a draw regardless of position, so
+    # by-label candidates' own mode assignments are unaffected either way.
+    mode_rng = random.Random(FIXED_SEED + 4)
 
-    already_done = len(candidates) - len(new_meta)
+    hyp_done_ids = checkpoint.load_done_custom_ids(hypothesis_path)
+    hyp_new_meta: dict[str, dict] = {}
+    for label, record in candidates:
+        if label == "__cross_referral__":
+            is_compound = False
+        else:
+            is_compound = mode_rng.random() < COMPOUND_FRACTION and len(record.field_data) >= 2
+        mode = "compound" if is_compound else "single"
+        custom_id = teacher.stable_id("narrow", str(record.chunk_id), label, mode)
+        if custom_id in hyp_done_ids:
+            continue
+        hyp_new_meta[custom_id] = {
+            "context_text": record.content,
+            "field_data": dict(record.field_data),
+            "allowed_keys": list(record.field_data.keys()),
+            "compound": is_compound,
+            "seed_chunk_id": str(record.chunk_id),
+            "seed_brand": record.brand,
+        }
+
+    already_done = len(candidates) - len(hyp_new_meta)
     if already_done:
-        print(f"    [narrow_positive] {already_done}/{len(candidates)} already done — resuming, {len(new_meta)} new this run")
+        print(f"    [narrow_hypothesis] {already_done}/{len(candidates)} already done — resuming, {len(hyp_new_meta)} new this run")
 
     system_prompt = _base_system_prompt()
 
-    def build_item(custom_id: str, meta: dict) -> teacher.BatchRequestItem:
+    def build_hypothesis_item(custom_id: str, meta: dict) -> teacher.BatchRequestItem:
         return teacher.BatchRequestItem(
             custom_id=custom_id, system_prompt=system_prompt,
             user_message=teacher.build_generation_prompt(
                 context_text=meta["context_text"],
-                allowed_keys_description=json.dumps([meta["label"]], ensure_ascii=False),
+                allowed_keys_description=json.dumps(meta["allowed_keys"], ensure_ascii=False),
+                compound=meta["compound"],
             ),
         )
 
-    def write_fn(custom_id: str, meta: dict, result: teacher.TeacherCallResult | None):
+    def write_hypothesis(custom_id: str, meta: dict, result: teacher.TeacherCallResult | None):
         if result is None:
             return None  # errored/canceled/expired batch entry — nothing billed, nothing to parse
         cost_tracker.record("narrow_positive", result.input_tokens, result.output_tokens)
@@ -294,22 +559,182 @@ async def run_pass1_narrow_positive(
         if question is None or json_block is None or not isinstance(json_block, dict):
             return None
 
-        _write_record(out_path, {
+        _write_record(hypothesis_path, {
             "custom_id": custom_id,
-            "pass": "narrow_positive",
+            "pass": "narrow_hypothesis",
             "instruction": question,
             "input": meta["context_text"],
             "output_json": json_block,
             "output_phrasing": phrasing,
             "raw_output": result.raw_text,
-            "grounding": {"type": "narrow", "field_data": {meta["label"]: meta["value"]}},
+            "seed_chunk_id": meta["seed_chunk_id"],
+            "seed_brand": meta["seed_brand"],
         })
         return question
 
     if candidates:
         await _run_checkpointed_batch(
-            client, pass_label="narrow_positive", out_path=out_path, state_path=state_path,
-            new_meta=new_meta, build_item=build_item, write_fn=write_fn,
+            client, pass_label="narrow_hypothesis", out_path=hypothesis_path, state_path=state_path,
+            new_meta=hyp_new_meta, build_item=build_hypothesis_item, write_fn=write_hypothesis,
+            use_batch=_use_batch(limit, force_batch),
+        )
+
+    # ---- Phase 2: local, real-retrieval classification (zero Claude cost) ----
+    hypotheses = _load_jsonl(hypothesis_path)
+    resolved_source_ids = _load_resolved_source_ids([out_path, absence_out_path, discarded_path])
+
+    correction_meta: dict[str, dict] = {}
+    confirmed_count = reattributed_count = discarded_count = 0
+    brand_filtered_count = 0
+    for hyp in hypotheses:
+        if hyp["custom_id"] in resolved_source_ids:
+            continue
+
+        # 2026-08-25: universal, not just for the guaranteed cross-referral
+        # seeds — ANY candidate whose seed chunk carries a real brand gets
+        # its classification retrieval run under that exact brand filter,
+        # mirroring TextReplyController.reply's own gating byte-for-byte
+        # (`if brand_filter and "brand" in allowed_metadata_keys`). Without
+        # this, a brand-tagged candidate would be classified against
+        # unfiltered retrieval — a different, less restrictive condition
+        # than production actually applies whenever a patient has that
+        # brand selected, which is exactly the fidelity gap this session
+        # set out to close for Pass 1 as a whole.
+        seed_brand = hyp.get("seed_brand")
+        metadata_filters = None
+        if seed_brand and "brand" in (client_config.allowed_metadata_keys or []):
+            metadata_filters = {"brand": seed_brand}
+            brand_filtered_count += 1
+
+        results = await retrieval_controller.retrieve(
+            client_id=client_id, query=hyp["instruction"], metadata_filters=metadata_filters,
+            top_k_override=client_config.whatsapp_retrieval_top_k_broad,
+        )
+        if not results:
+            _write_record(discarded_path, {
+                "source_hypothesis_custom_id": hyp["custom_id"], "reason": "zero_retrieval_results",
+            })
+            discarded_count += 1
+            continue
+
+        top_chunk = results[0]["chunk"]
+        retrieved_chunk_id = str(top_chunk.id)
+        retrieved_field_data = dict((top_chunk.metadata_payload or {}).get("field_data") or {})
+
+        if retrieved_chunk_id == hyp["seed_chunk_id"]:
+            _write_final_narrow(out_path, hyp, content=top_chunk.content, field_data=retrieved_field_data)
+            confirmed_count += 1
+            continue
+
+        if _field_data_matches(hyp["output_json"], retrieved_field_data):
+            _write_final_narrow(out_path, hyp, content=top_chunk.content, field_data=retrieved_field_data)
+            reattributed_count += 1
+            continue
+
+        custom_id = teacher.stable_id("narrow_correction", hyp["custom_id"], retrieved_chunk_id)
+        correction_meta[custom_id] = {
+            "hypothesis_custom_id": hyp["custom_id"],
+            "instruction": hyp["instruction"],
+            "retrieved_content": top_chunk.content,
+            "retrieved_field_data": retrieved_field_data,
+        }
+
+    if hypotheses:
+        print(
+            f"    [narrow_classify] {confirmed_count} confirmed, {reattributed_count} reattributed "
+            f"(real near-duplicate), {len(correction_meta)} flagged for correction, "
+            f"{discarded_count} discarded (zero retrieval results), "
+            f"{brand_filtered_count}/{len(hypotheses)} classified under a real brand filter"
+        )
+
+    # ---- Phase 1b: correction batch (only real, still-unresolved mismatches) ----
+    # "already billed" (correction_path has a raw teacher result for this
+    # custom_id) and "final write already landed" (out_path/absence_out_path
+    # has it, i.e. it's in resolved_source_ids) are DIFFERENT questions —
+    # correction_meta above already excludes fully-resolved hypotheses, but
+    # a candidate can be billed WITHOUT its final write having landed (a
+    # prior --fresh wiped out_path/absence_out_path without touching this
+    # bookkeeping file). Conflating the two meant such a candidate was
+    # skipped as "already done" without ever being rewritten — the real
+    # 2026-08-25 bug this split fixes. Billed-but-unresolved candidates are
+    # replayed from their existing raw record (zero new teacher cost);
+    # only genuinely new candidates go through a fresh teacher call.
+    existing_corrections = {rec["custom_id"]: rec for rec in _load_jsonl(correction_path)}
+
+    def finalize_correction(custom_id: str, meta: dict, json_block, phrasing: str, raw_output: str) -> None:
+        if isinstance(json_block, dict) and json_block:
+            _write_record(out_path, {
+                "custom_id": custom_id,
+                "pass": "narrow_positive",
+                "source_hypothesis_custom_id": meta["hypothesis_custom_id"],
+                "instruction": meta["instruction"],
+                "input": meta["retrieved_content"],
+                "output_json": json_block,
+                "output_phrasing": phrasing,
+                "raw_output": raw_output,
+                "grounding": {"type": "narrow", "field_data": meta["retrieved_field_data"]},
+            })
+        else:
+            _write_record(absence_out_path, {
+                "custom_id": f"narrow-mismatch-{custom_id}",
+                "pass": "absence",
+                "source_hypothesis_custom_id": meta["hypothesis_custom_id"],
+                "instruction": meta["instruction"],
+                "input": meta["retrieved_content"],
+                "output_json": json_block,
+                "output_phrasing": phrasing,
+                "raw_output": raw_output,
+                "grounding": {"type": "absence"},
+            })
+
+    replayed = 0
+    for custom_id, meta in correction_meta.items():
+        existing = existing_corrections.get(custom_id)
+        if existing is not None:
+            finalize_correction(custom_id, meta, existing["output_json"], existing["output_phrasing"], existing["raw_output"])
+            replayed += 1
+    if replayed:
+        print(f"    [narrow_correction] replayed {replayed} already-billed correction(s) whose final write was missing")
+
+    correction_new_meta = {cid: meta for cid, meta in correction_meta.items() if cid not in existing_corrections}
+
+    def build_correction_item(custom_id: str, meta: dict) -> teacher.BatchRequestItem:
+        return teacher.BatchRequestItem(
+            custom_id=custom_id, system_prompt=system_prompt,
+            user_message=teacher.build_verification_prompt(
+                question=meta["instruction"], context_text=meta["retrieved_content"],
+                allowed_keys_description=json.dumps(list(meta["retrieved_field_data"].keys()), ensure_ascii=False),
+            ),
+        )
+
+    def write_correction(custom_id: str, meta: dict, result: teacher.TeacherCallResult | None):
+        if result is None:
+            return None
+        cost_tracker.record("narrow_correction", result.input_tokens, result.output_tokens)
+        if result.truncated():
+            return None
+
+        json_block, phrasing = teacher.extract_json_and_phrasing(result.raw_text)
+        if json_block is None:
+            return None
+
+        _write_record(correction_path, {
+            "custom_id": custom_id,
+            "pass": "narrow_correction",
+            "source_hypothesis_custom_id": meta["hypothesis_custom_id"],
+            "instruction": meta["instruction"],
+            "input": meta["retrieved_content"],
+            "output_json": json_block,
+            "output_phrasing": phrasing,
+            "raw_output": result.raw_text,
+        })
+        finalize_correction(custom_id, meta, json_block, phrasing, result.raw_text)
+        return meta["instruction"]
+
+    if correction_new_meta or checkpoint.load_batch_state(state_path).get("narrow_correction") is not None:
+        await _run_checkpointed_batch(
+            client, pass_label="narrow_correction", out_path=correction_path, state_path=state_path,
+            new_meta=correction_new_meta, build_item=build_correction_item, write_fn=write_correction,
             use_batch=_use_batch(limit, force_batch),
         )
 
@@ -483,7 +908,12 @@ async def run_pass3_absence(
         custom_id = teacher.stable_id("absence", question, str(unrelated.chunk_id))
         if custom_id in done_ids or custom_id in new_meta:
             continue  # already processed in a prior run, or a repeat draw this run — try another pair
-        context_text = "\n".join(f"{k}: {v}" for k, v in unrelated.field_data.items())
+        # 2026-08-24: real full chunk content, not a reconstructed
+        # "\n"-joined field_data dump — matches what a real 1-chunk
+        # retrieval now hands production (§ Pass 1's own redesign note),
+        # so an absence example's context has the same shape a real
+        # irrelevant-chunk retrieval would actually produce.
+        context_text = unrelated.content
         new_meta[custom_id] = {
             "question": question, "context_text": context_text,
             "allowed_keys_description": json.dumps(list(unrelated.field_data.keys()), ensure_ascii=False),
@@ -626,7 +1056,12 @@ async def run_pass4_ambiguous(
         custom_id = teacher.stable_id("ambiguous_direct", str(record.chunk_id), missing_field)
         if custom_id in done_ids:
             continue
-        context_text = "\n".join(f"{k}: {v}" for k, v in record.field_data.items())
+        # 2026-08-24: real full chunk content, not a reconstructed
+        # "\n"-joined field_data dump — same real-shape parity as Pass 1
+        # and Pass 3 above (ambiguous_cross_chunk already used the real
+        # `.content` via its [BEGIN SOURCE n] wrapping, so this brings
+        # ambiguous_direct in line with its own sibling sub-case too).
+        context_text = record.content
         new_meta[custom_id] = {
             "kind": "ambiguous_direct", "context_text": context_text,
             "field_data": dict(record.field_data), "target_field": missing_field,

@@ -124,13 +124,22 @@ async def run(client_id: str, limit: int | None = None, force_batch: bool = Fals
         "absence": OUT_DIR / "raw_absence.jsonl",
         "ambiguous": OUT_DIR / "raw_ambiguous.jsonl",
     }
+    # Pass 1's own intermediate bookkeeping files (hypothesis/correction/
+    # discarded — see sampling.narrow_intermediate_paths) MUST be wiped
+    # alongside raw_paths, not separately — a --fresh that wipes
+    # raw_narrow_positive.jsonl but leaves raw_narrow_correction.jsonl
+    # behind causes already-billed corrections to be silently skipped
+    # without their final write ever landing back in the wiped file (the
+    # real 2026-08-25 bug that motivated this). All wipeable paths are
+    # therefore tracked together from here on.
+    wipeable_paths = {**raw_paths, **sampling.narrow_intermediate_paths(raw_paths["narrow_positive"])}
     state_path = OUT_DIR / "batch_state.json"
 
     if fresh:
         print("[checkpoint] --fresh — wiping all raw_*.jsonl and batch_state.json, starting completely over")
-        checkpoint.wipe(raw_paths, state_path)
+        checkpoint.wipe(wipeable_paths, state_path)
     else:
-        already_written = {label: len(checkpoint.load_done_custom_ids(path)) for label, path in raw_paths.items()}
+        already_written = {label: len(checkpoint.load_done_custom_ids(path)) for label, path in wipeable_paths.items()}
         in_flight = checkpoint.load_batch_state(state_path)
         if any(already_written.values()) or in_flight:
             print("[checkpoint] resuming a prior run — existing progress found:")
@@ -159,11 +168,12 @@ async def run(client_id: str, limit: int | None = None, force_batch: bool = Fals
         teacher_client = teacher.build_client()
         tracker = CostTracker()
 
-        print("[stage1] Pass 1 — Narrow Positive...")
+        print("[stage1] Pass 1 — Narrow Positive (hypothesize -> real-retrieval classify -> correct)...")
         narrow_questions = await sampling.run_pass1_narrow_positive(
             client=teacher_client, working_set=working_set,
-            cost_tracker=tracker, out_path=raw_paths["narrow_positive"], state_path=state_path,
-            limit=limit, force_batch=force_batch,
+            retrieval_controller=context["retrieval_controller"], client_config=client_config, client_id=client_id,
+            cost_tracker=tracker, out_path=raw_paths["narrow_positive"], absence_out_path=raw_paths["absence"],
+            state_path=state_path, limit=limit, force_batch=force_batch,
         )
         print(f"[stage1] {len(narrow_questions)} narrow-positive examples on disk (this run + any prior)")
 

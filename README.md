@@ -1718,7 +1718,9 @@ Chain, in order: `deb4535fe6cf` (`chat_history`, `intent_log`, `dialogue_state_t
 originally for a Mode A relevance gate since removed) → `e8b3c9a1f2d7`
 (`whatsapp_field_selection_max_fields`; repurposes `whatsapp_min_relevance_score`'s default for its
 new role as FieldSelectionController's cosine-similarity floor — see "Structured field
-preservation & dynamic field selection" above).
+preservation & dynamic field selection" above) → ... → `a7c2e9f4b8d1` (drops the
+`FieldSelectionController`-era columns after its removal in favor of full-chunk narrow CONTEXT) →
+`c5d8f2a934b7` (`human_handoff_queue` — see "Reply verification safety gate" below).
 
 ### New dependencies
 
@@ -1934,6 +1936,43 @@ inherit the same deployment shape.
   "real source text" would be worse than a small, clearly-labeled, narrowly-scoped exception (the
   same reasoning claude.md §1.3 already applies to Bucket B/C's own hardcoding carve-out, for a
   different, genuinely non-business category of string).
+
+### Reply verification safety gate (`ReplyVerificationController` + `human_handoff_queue`)
+
+Follows Step 7's LoRA fine-tune (`src/fine_tune_nilechat/nile_chat_finetune_v2_colab.ipynb`):
+every Mode A reply's phrasing is now checked against its own extracted `debug_json` before
+`TextReplyController` returns it, instead of trusting the fine-tuned model's grounding discipline
+unverified in production.
+
+- **`controllers/ReplyVerificationController.py`** — re-implements
+  `scripts/finetune_data/grounding_gate.py`'s `_check_phrasing_numeric_grounding` natively (same
+  regex, same sentence-splitting/question-exclusion rule) rather than importing it — `scripts/` is
+  never imported by `src/` at runtime (claude.md's directory tree). Every number in a non-question
+  claim sentence must appear among the values in the turn's own `debug_json` (a flat dict for a
+  narrow answer, or each `{"source", "fields"}` entry's values for a broad one); a turn with no
+  `debug_json` at all (out-of-domain decline, or a not-yet-fine-tuned model) passes through
+  unchecked. On rejection, the real draft reply is withheld — `REPLY_VERIFICATION_FAILED_FALLBACK`
+  is shown instead — and the turn is written to `human_handoff_queue` for a human agent to answer
+  directly. `debug_json` is still returned to the caller even on rejection (unlike the
+  generation-timeout fallback path) — it's a real artifact of what the model extracted, and is
+  exactly what a reviewer needs to see why the phrasing was blocked.
+- **`models/HumanHandoffQueueModel.py`** + `human_handoff_queue` table — minimal by design: one
+  `enqueue()` write method, the only thing `ReplyVerificationController` needs. A resolve/list-open
+  surface for an actual human-agent dashboard is a later, separately-scoped step.
+- **`TextReplyController`** gained a required `reply_verification_controller` constructor arg, and
+  `reply()`/`_mode_a_reply()` both gained a required `session_id` parameter (threaded from
+  `IntentRoutingController.route_turn`, which already had it) so a rejected turn's
+  `human_handoff_queue` row can be joined back to its session the same way `chat_history` rows are.
+- **`main.py`** — `app.human_handoff_queue_model` constructed right after `session_store`,
+  `app.reply_verification_controller` constructed from it and passed into `TextReplyController`.
+
+### Database migration — `human_handoff_queue`
+
+```bash
+cd src/models/db_schemes/raylab
+alembic upgrade head
+alembic current   # should show c5d8f2a934b7 (head)
+```
 
 ## Environment variables
 

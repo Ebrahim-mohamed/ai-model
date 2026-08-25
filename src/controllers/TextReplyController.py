@@ -121,20 +121,20 @@ class TextReplyController(BaseController):
     per reply and trusts it directly — see whatsapp_mode_a_reply_directive
     rule 1 for the current grounding/anti-fabrication wording.
 
-    Structured field preservation: narrow-breadth CONTEXT is no longer
-    the whole flattened chunk. ChunkingController now also stores each
-    chunk's field-level {label: value} dict (metadata_payload["field_data"]),
-    and field_selection_controller narrows that down to just the 1-2
-    fields whose label actually matches the patient's question (embedding
-    cosine similarity, not a keyword/regex match — see
-    FieldSelectionController). This targets the largest documented
-    failure category head-on: the model no longer has to silently ignore
-    13 unrelated fields from memory while phrasing an answer, because it's
-    never shown them. Falls back to full chunk content — today's
-    behavior — whenever field_data is empty/missing (every chunk synced
-    before this change) or nothing clears the similarity floor, so this
-    is additive and never regresses a chunk that hasn't been re-synced
-    yet.
+    Full-chunk narrow CONTEXT (2026-08-25, superseding the original
+    FieldSelectionController design): narrow-breadth CONTEXT is each
+    retrieved chunk's full, real content, unfiltered — see
+    _narrow_context_block. The earlier design pre-filtered this down to
+    the 1-2 fields an embedding-similarity match said were relevant
+    before the model ever saw the chunk; real evidence (this session's
+    own root-cause work on the cross-brand-referral regression) showed
+    that similarity ranking reliably lost to a field whose label read
+    nothing like the question but whose value was exactly the answer,
+    with no query-independent fix available. The fine-tuned model is now
+    trained to make that field-selection judgment itself, directly from
+    the full chunk (scripts/finetune_data/sampling.py Pass 1) — this
+    controller's job narrowed to matching that same input shape exactly,
+    not to pre-selecting content on the model's behalf.
 
     JSON-then-phrasing output: the Section 3 Step 1 fine-tuning dataset
     (scripts/finetune_data_out/) trains the model to reason in a fenced
@@ -171,18 +171,18 @@ class TextReplyController(BaseController):
         client_config_model,
         generation_client,
         dialogue_state_template_map_model,
-        field_selection_controller,
+        reply_verification_controller,
     ):
         super().__init__()
         self.retrieval_controller = retrieval_controller
         self.client_config_model = client_config_model
         self.generation_client = generation_client
         self.dialogue_state_template_map_model = dialogue_state_template_map_model
-        self.field_selection_controller = field_selection_controller
+        self.reply_verification_controller = reply_verification_controller
         self.template_parser = TemplateParser()
         self.logger = logging.getLogger(__name__)
 
-    async def reply(self, client_id: str, text: str, session_state: dict) -> tuple[str, str, object | None]:
+    async def reply(self, client_id: str, session_id, text: str, session_state: dict) -> tuple[str, str, object | None]:
         """Returns (reply_text, mode, debug_json) — mode is "mode_a" or
         "mode_b", surfaced for logging/Postman verification, never used
         by the caller to branch (the decision already happened here).
@@ -206,7 +206,7 @@ class TextReplyController(BaseController):
                 substitutions = self._mode_b_substitutions(session_state)
                 return self.template_parser.resolve(bucket, mapping.template_id, **substitutions), "mode_b", None
 
-        reply_text, json_block = await self._mode_a_reply(client_id, text, session_state)
+        reply_text, json_block = await self._mode_a_reply(client_id, session_id, text, session_state)
         return reply_text, "mode_a", json_block
 
     def _mode_b_substitutions(self, session_state: dict) -> dict:
@@ -227,42 +227,18 @@ class TextReplyController(BaseController):
             "employee_name": "مساعد رايلاب الذكي",
         }
 
-    async def _narrow_context_block(self, text: str, results: list[dict], client_config) -> str:
-        """Builds narrow-breadth CONTEXT one already-retrieved chunk at a
-        time: hand field_selection_controller that chunk's structured
-        field_data and keep only the label:value pairs it says actually
-        match the question, instead of the chunk's full flattened text.
-        Loops over every chunk in `results` rather than assuming exactly
-        one — correct either way, since whatsapp_retrieval_top_k_narrow
-        is itself a client_config value, never assumed to be 1 in code.
-
-        Two independent fallbacks to the chunk's full content, both real
-        and both expected in production, not error cases: (a) field_data
-        is empty/missing — true for every chunk synced before this
-        change existed, self-resolving as clients re-sync; (b) field_data
-        exists but nothing cleared the similarity floor for this
-        particular question — safer to hand over the whole chunk than to
-        silently under-inform the model with an empty CONTEXT."""
-        context_lines = []
-        for result in results:
-            chunk = result["chunk"]
-            field_data = (chunk.metadata_payload or {}).get("field_data")
-
-            selected_fields = {}
-            if field_data:
-                selected_fields = await self.field_selection_controller.select_relevant_fields(
-                    text,
-                    field_data,
-                    min_similarity=client_config.whatsapp_min_relevance_score,
-                    max_fields=client_config.whatsapp_field_selection_max_fields,
-                )
-
-            if selected_fields:
-                context_lines.extend(f"{label}: {value}" for label, value in selected_fields.items())
-            else:
-                context_lines.append(chunk.content)
-
-        return "\n".join(context_lines)
+    async def _narrow_context_block(self, results: list[dict]) -> str:
+        """Builds narrow-breadth CONTEXT from each already-retrieved
+        chunk's full, real content — unfiltered. Matches exactly what the
+        fine-tuned model is trained on (scripts/finetune_data/sampling.py
+        Pass 1, 2026-08-25 redesign): the model itself now decides which
+        field(s) in the full chunk answer the question, replacing the old
+        FieldSelectionController pre-filtering step (deleted — this was
+        its only caller). Loops over every chunk in `results` rather than
+        assuming exactly one — correct either way, since
+        whatsapp_retrieval_top_k_narrow is itself a client_config value,
+        never assumed to be 1 in code."""
+        return "\n\n".join(result["chunk"].content for result in results)
 
     def _classify_breadth(self, text: str, results: list[dict], client_config) -> str:
         """Deterministic replacement for the old classify_intent(["narrow",
@@ -312,12 +288,24 @@ class TextReplyController(BaseController):
         )
         return decision
 
-    async def _mode_a_reply(self, client_id: str, text: str, session_state: dict) -> tuple[str, object | None]:
+    async def _mode_a_reply(
+        self, client_id: str, session_id, text: str, session_state: dict,
+    ) -> tuple[str, object | None]:
         """Returns (phrasing, json_block) — see reply()'s own docstring
         for what json_block is and who consumes it. json_block is always
         None on the two fallback paths below (a timeout or an unusable
         generation has no JSON to report) and on the out-of-domain decline
-        path (never part of this fine-tuning dataset)."""
+        path (never part of this fine-tuning dataset).
+
+        The final step, before returning, is ReplyVerificationController's
+        safety gate (Implementation Plan's post-fine-tuning Step 8): the
+        phrasing this method is about to return gets checked against its
+        own json_block for unverified numeric claims, and swapped for a
+        safe fallback (with the real draft escalated to human_handoff_queue)
+        if it fails. This runs on every real Mode A answer — never on the
+        out-of-domain decline or the two earlier fallback returns below,
+        which either have no json_block to verify against or are already
+        the safe fallback themselves."""
         history = session_state.get("history", [])
         client_config = await self.client_config_model.get_client_config(client_id)
 
@@ -401,7 +389,7 @@ class TextReplyController(BaseController):
             system_prompt = self.template_parser.resolve(TemplateBucket.C, "whatsapp_mode_a_reply_directive")
 
             if breadth == "narrow":
-                context_block = await self._narrow_context_block(text, results, client_config)
+                context_block = await self._narrow_context_block(results)
             else:
                 # Broad queries keep full multi-chunk content — Rule 5
                 # explicitly wants breadth here (a summary across several
@@ -540,4 +528,16 @@ class TextReplyController(BaseController):
             # shown for this turn.
             return GENERATION_UNAVAILABLE_FALLBACK, None
 
-        return phrasing, json_block
+        # Unlike the truncation-fallback branch just above, json_block here
+        # is a real, successfully-extracted artifact of what the model
+        # actually computed — it's the reason a rejection would even be
+        # detectable. So it's still returned as debug_json even if the
+        # gate below swaps out the phrasing: a human reviewing
+        # human_handoff_queue (or scripts/collect_golden_responses.py)
+        # needs exactly this JSON to see what the model got right in
+        # extraction but phrased ungrounded, which is a different, more
+        # specific failure than "no real answer was produced at all".
+        verified_reply = await self.reply_verification_controller.verify_and_gate(
+            client_id, session_id, text, phrasing, json_block,
+        )
+        return verified_reply, json_block

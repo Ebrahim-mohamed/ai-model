@@ -45,48 +45,6 @@ class ClientConfig(SQLAlchemyBase):
     whatsapp_retrieval_top_k_narrow = Column(Integer, nullable=False, server_default="1")
     whatsapp_retrieval_top_k_broad = Column(Integer, nullable=False, server_default="5")
 
-    # Repurposed (was: a Mode A narrow-query relevance gate on the
-    # reranker's raw logit score — that mechanism was removed; see
-    # TextReplyController's git history). Now: the minimum BGE-M3 cosine
-    # similarity a chunk's field label must reach against the patient's
-    # question for FieldSelectionController to hand that field to the LLM
-    # (claude.md §1.3 — a similarity cutoff is a business threshold,
-    # never a Python constant). Column name kept as-is deliberately — no
-    # migration needed to rename it, only to redocument it.
-    #
-    # IMPORTANT — the old default (0.0) and its justification do NOT
-    # carry over: that number was calibrated against the cross-encoder
-    # reranker's unbounded raw logit score (real samples: 5.13 down to
-    # -5.8). Cosine similarity is a different, bounded scale (-1 to 1),
-    # and same-language short phrases routinely sit at a positive
-    # baseline similarity even when unrelated — 0.0 here would likely
-    # accept nearly every field and defeat the filter. 0.35 below is a
-    # conservative placeholder, NOT a calibrated value — no real BGE-M3
-    # query-vs-label similarity samples have been collected yet (unlike
-    # the reranker gate, which had real production traffic to measure
-    # against). Recalibrate this the same way once FieldSelectionController
-    # is live: collect real query/label similarity pairs and pick a floor
-    # with an actual gap between genuine and spurious matches.
-    whatsapp_min_relevance_score = Column(Float, nullable=False, server_default="0.35")
-
-    # How many fields FieldSelectionController may hand the LLM for a
-    # narrow query. Lowered from 2 to 1 after the root-cause investigation
-    # into the 68.7%/73.1% golden-suite results: scripts/finetune_data/
-    # sampling.py's narrow_positive pass builds EVERY training/val example
-    # as a single "label: value" line by construction (see its own
-    # docstring — compound 2-field narrow questions were an explicit,
-    # disclosed scope simplification, never actually generated), so 2 was
-    # already handing the model a shape it was never trained on for the
-    # ordinary single-fact case, not just the compound one. Verified in a
-    # real failing case (elevator-availability query): the model saw 2
-    # fields (elevator status + branch address) where training only ever
-    # showed 1. 1 exactly matches the training distribution for the
-    # majority (single-fact) narrow case, at the disclosed cost of
-    # compound narrow questions ("فيه أسانسير وكرسي متحرك؟") now reliably
-    # getting only their top-ranked field — no regression there, since
-    # that shape was already outside the training distribution either way.
-    whatsapp_field_selection_max_fields = Column(Integer, nullable=False, server_default="1")
-
     # Deterministic breadth classification — replaces the LLM-based
     # classify_intent(["narrow","broad"]) call, which real traffic proved
     # unreliable: clearly-narrow questions (e.g. "عندي تأمين بس عايز

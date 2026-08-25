@@ -9,3 +9,4 @@ from .shootout_result import ShootoutResult
 from .chat_history import ChatHistory
 from .intent_log import IntentLog
 from .dialogue_state_template_map import DialogueStateTemplateMap
+from .human_handoff_queue import HumanHandoffQueue

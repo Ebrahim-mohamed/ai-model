@@ -9,11 +9,12 @@ from models.ClientConfigModel import ClientConfigModel
 from models.ChunkModel import ChunkModel
 from models.ChatHistoryModel import ChatHistoryModel
 from models.DialogueStateTemplateMapModel import DialogueStateTemplateMapModel
+from models.HumanHandoffQueueModel import HumanHandoffQueueModel
 from controllers.SyncController import SyncController
 from controllers.RetrievalController import RetrievalController
-from controllers.FieldSelectionController import FieldSelectionController
 from controllers.TextReplyController import TextReplyController
 from controllers.IntentRoutingController import IntentRoutingController
+from controllers.ReplyVerificationController import ReplyVerificationController
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.reranker.RerankerProviderFactory import RerankerProviderFactory
@@ -76,13 +77,6 @@ async def startup_span():
         reranker_client=app.reranker_client,
     )
 
-    # Structured field preservation (Section 3 Step 1 generation-quality
-    # fix) — reuses the SAME embedding_client instance already warmed up
-    # above for retrieval; no new model, no new provider, no new factory
-    # entry. Pure computation over already-tenant-scoped chunk data, so
-    # it has no client_config_model/DB dependency of its own.
-    app.field_selection_controller = FieldSelectionController(embedding_client=app.embedding_client)
-
     # Section 3 Step 1 — the WhatsApp text pipeline. generation_client is
     # a thin HTTP adapter (no local weights to warm up here, unlike
     # embedding_client/reranker_client above); it is not health-checked
@@ -100,12 +94,22 @@ async def startup_span():
         history_window=settings.SESSION_HISTORY_WINDOW,
     )
 
+    # Post-fine-tuning safety gate (Implementation Plan's Step 8, following
+    # Step 7's LoRA fine-tune) — verifies every Mode A reply's phrasing
+    # against its own extracted debug_json before TextReplyController
+    # returns it, escalating a rejection to human_handoff_queue instead of
+    # showing the patient an unverified numeric claim.
+    app.human_handoff_queue_model = await HumanHandoffQueueModel.create_instance(app.db_client)
+    app.reply_verification_controller = ReplyVerificationController(
+        human_handoff_queue_model=app.human_handoff_queue_model,
+    )
+
     app.text_reply_controller = TextReplyController(
         retrieval_controller=app.retrieval_controller,
         client_config_model=app.client_config_model,
         generation_client=app.generation_client,
         dialogue_state_template_map_model=app.dialogue_state_template_map_model,
-        field_selection_controller=app.field_selection_controller,
+        reply_verification_controller=app.reply_verification_controller,
     )
     app.intent_routing_controller = IntentRoutingController(
         generation_client=app.generation_client,

@@ -22,6 +22,31 @@ protects. Non-numeric claim drift is a real, disclosed gap — this gate
 only auto-rejects a numeric fabrication, and does not further check
 non-numeric phrasing claims against the JSON (a candidate soft/manual-
 review signal for a later iteration, not implemented here).
+
+2026-08-25: the numeric-grounding check was narrowed from "phrasing's
+numbers must appear somewhere in the source chunk's full field_data" to
+"phrasing's numbers must appear in output_json's own values" (narrow),
+or each cited source's own extracted `fields` (broad) — see
+_check_phrasing_numeric_grounding's call sites in check_record. This
+matches the production decision to keep JSON-extraction and phrasing in
+one model call rather than splitting them into two (the raw chunk stays
+technically visible to the model during phrasing) — "phrasing reflects
+only the JSON" is therefore a trained behavior, not a structural
+guarantee, so the training data itself must consistently demonstrate it.
+Checking against the wider field_data would have silently accepted a
+real-but-unselected chunk fact leaking into phrasing, which is exactly
+what this rule exists to prevent. This narrowing can only reject
+strictly more than before (output_json/fields is already a verified
+subset of field_data by the time this check runs), so no previously
+rejected record becomes newly accepted.
+
+Disclosed limit (unchanged by this tightening): this gate verifies
+FAITHFULNESS — every key/value real, every phrasing number traceable to
+the JSON — never RELEVANCE. It cannot detect a real-but-wrong-field
+answer (e.g. the model picks a genuinely real field that doesn't
+actually answer the question asked) — that failure mode isn't a
+grounding violation and no deterministic check here catches it; only
+measured extraction accuracy (the golden suite) speaks to that.
 """
 
 import json
@@ -96,7 +121,18 @@ def check_record(record: dict) -> GateResult:
         result = _check_keys_and_values(output_json, field_data)
         if not result.accepted:
             return result
-        return _check_phrasing_numeric_grounding(phrasing, _all_values_text(field_data))
+        # 2026-08-25: phrasing is checked against output_json's OWN values,
+        # not the full chunk's field_data — matches the production
+        # decision (Option 1: single call, no architectural JSON/phrasing
+        # split) that "phrasing must be built solely from the JSON block"
+        # is a trained behavior, not a structural one. Checking against
+        # the wider field_data would silently accept a phrasing sentence
+        # that cites a real chunk fact the model never actually selected
+        # into its JSON — exactly the gap that discipline is supposed to
+        # close. output_json is already a verified subset of field_data at
+        # this point (the check above), so this is strictly narrower, never
+        # wider, than the previous check.
+        return _check_phrasing_numeric_grounding(phrasing, _all_values_text(output_json))
 
     if kind == "broad":
         sources_field_data = grounding["sources_field_data"]
@@ -118,10 +154,15 @@ def check_record(record: dict) -> GateResult:
             # [BEGIN SOURCE n] wrapper was built to fix. A value that's
             # genuinely grounded elsewhere in the overall context but
             # attributed to the wrong source fails here.
-            result = _check_keys_and_values(entry.get("fields", {}), source_field_data)
+            entry_fields = entry.get("fields", {})
+            result = _check_keys_and_values(entry_fields, source_field_data)
             if not result.accepted:
                 return GateResult.reject("wrong_source_attribution", source=source_index, **result.detail)
-            all_values_text += " " + _all_values_text(source_field_data)
+            # 2026-08-25: accumulate from this entry's own extracted
+            # `fields` (already verified above as a subset of
+            # source_field_data), not the source's full field_data — same
+            # narrowing as the narrow-case fix above, for the same reason.
+            all_values_text += " " + _all_values_text(entry_fields)
 
         return _check_phrasing_numeric_grounding(phrasing, all_values_text)
 

@@ -61,7 +61,9 @@ class IntentRoutingController(BaseController):
         mode = None
         debug_json = None
         if target == RoutingTarget.TEXT_PIPELINE.value:
-            reply_text, mode, debug_json = await self.text_reply_controller.reply(client_id, text, session_state)
+            reply_text, mode, debug_json = await self.text_reply_controller.reply(
+                client_id, session_id, text, session_state,
+            )
             routing_outcome = RoutingOutcome.AI_HANDLED
         else:
             # Steps 2/5 (complaints, booking) aren't built yet — routed
