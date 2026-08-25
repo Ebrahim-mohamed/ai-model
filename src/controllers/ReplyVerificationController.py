@@ -67,21 +67,66 @@ def _json_values_text(json_block) -> str:
     return ""
 
 
-def _check_phrasing_numeric_grounding(phrasing: str, allowed_values_text: str) -> GateResult:
-    """Identical algorithm to grounding_gate.py's own
-    _check_phrasing_numeric_grounding: every number in a claim sentence
-    (one not ending in ؟/?) must appear among the allowed values' own
-    numbers. Hard auto-reject only — see that module's docstring for the
-    disclosed scope limit (faithfulness, not relevance; numeric claims
-    only, not every kind of claim drift)."""
-    allowed_numbers = set(NUMBER_TOKEN_RE.findall(allowed_values_text))
-    for sentence in re.split(r"(?<=[.!؟?])\s+", phrasing):
-        stripped = sentence.strip()
-        if not stripped or stripped.endswith(("؟", "?")):
-            continue
-        for number in NUMBER_TOKEN_RE.findall(stripped):
-            if number not in allowed_numbers:
-                return GateResult.reject("unverified_numeric_claim", sentence=stripped, number=number)
+def _check_phrasing_numeric_grounding(phrasing: str, allowed_values_text: str, patient_message: str = "") -> GateResult:
+    """Same algorithm as grounding_gate.py's own
+    _check_phrasing_numeric_grounding, with two live-production-only
+    refinements (2026-08-25 golden-suite v2 audit): every number in a
+    claim sentence (one not ending in ؟/?) must appear among the allowed
+    values' own numbers, OR among the numbers the patient themselves
+    typed in patient_message — a number the patient already stated (e.g.
+    echoing their own age back while explaining an eligibility rule) is
+    definitionally not a model fabrication, so it's folded into the
+    allowed set rather than treated as an unverified claim. Sentences are
+    now split per-line first, THEN by sentence-ending punctuation within
+    each line: the previous whole-phrasing split let a multi-line
+    numbered list with no internal '.'/'!'/'؟' get treated as one giant
+    "sentence" that only counted as a question if the very last line
+    happened to end in '؟' — silently skipping every number inside the
+    list from grounding-checking entirely. Hard auto-reject only — see
+    grounding_gate.py's own docstring for the disclosed scope limit
+    (faithfulness, not relevance; numeric claims only, not every kind of
+    claim drift).
+
+    A leading list/ordinal marker ("1- ", "2. ", "3) ") is stripped from
+    each line before the number search — caught during verification of
+    this exact fix: a genuinely fully-grounded reply that happens to
+    phrase itself as a numbered list (the model's own formatting choice,
+    not necessarily inherited from the source text's own shape) would
+    otherwise have its "1"/"2"/"3" markers themselves flagged as
+    unverified numeric claims, a false rejection unrelated to whether the
+    real facts in the list are grounded. Only a marker at the START of a
+    line is stripped (digit immediately followed by -/./) then
+    whitespace) — a real fact number never has that exact shape, so this
+    can't hide a genuine unverified number.
+
+    The clause-split now also breaks on a comma (Arabic '،' or ASCII ',')
+    followed by whitespace, not just '.'/'!'/'؟'/'?' — caught during the
+    2026-08-25 post-fix golden-suite re-run: a single-line reply that
+    joins a real factual claim to its trailing follow-up question with a
+    comma instead of a period ("...بدلا من 1705 يا فندم، تحب أحجزلك
+    فيها؟") was still being swallowed whole as "one sentence ending in a
+    question mark", exempting the real numbers in the factual half from
+    grounding entirely — the same root problem the line-split fix above
+    closed for multi-line lists, in a single-line shape that fix didn't
+    reach. Splitting only counts a comma as a boundary when it's followed
+    by whitespace, deliberately: a thousands-separator comma inside a
+    number ("1,000") is never followed by whitespace, so it can't be
+    mistaken for a clause boundary and split apart into two number
+    tokens."""
+    allowed_numbers = (
+        set(NUMBER_TOKEN_RE.findall(allowed_values_text))
+        | set(NUMBER_TOKEN_RE.findall(patient_message))
+    )
+    list_marker_re = re.compile(r"^\s*\d+[-.\)]\s+")
+    for line in phrasing.splitlines():
+        line = list_marker_re.sub("", line)
+        for sentence in re.split(r"(?<=[.!؟?,،])\s+", line):
+            stripped = sentence.strip()
+            if not stripped or stripped.endswith(("؟", "?")):
+                continue
+            for number in NUMBER_TOKEN_RE.findall(stripped):
+                if number not in allowed_numbers:
+                    return GateResult.reject("unverified_numeric_claim", sentence=stripped, number=number)
     return GateResult.accept()
 
 
@@ -125,7 +170,7 @@ class ReplyVerificationController(BaseController):
         if json_block is None:
             return phrasing
 
-        result = _check_phrasing_numeric_grounding(phrasing, _json_values_text(json_block))
+        result = _check_phrasing_numeric_grounding(phrasing, _json_values_text(json_block), patient_message)
         if result.accepted:
             return phrasing
 
