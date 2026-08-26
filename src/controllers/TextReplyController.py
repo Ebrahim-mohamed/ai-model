@@ -79,11 +79,32 @@ def _split_json_and_phrasing(raw_output: str) -> tuple[object | None, str]:
     return parsed, phrasing
 
 
+def _is_json_empty(json_block) -> bool:
+    """True when json_block extracted nothing at all — an empty dict
+    (narrow shape) or a broad-shape list where every source's own fields
+    dict is empty. Drives the widening retry in _mode_a_reply: a
+    completely empty extraction is the model's own signal that the
+    narrow CONTEXT it was given didn't answer the question, worth trying
+    again with the wider broad-ceiling candidate set already fetched for
+    this same turn. None (no JSON block at all — the out-of-domain
+    decline path, or a not-yet-fine-tuned model's plain-text output) is
+    deliberately NOT "empty" here: that's a structurally different shape
+    the retry isn't meant to touch."""
+    if json_block is None:
+        return False
+    if isinstance(json_block, dict):
+        return not json_block
+    if isinstance(json_block, list):
+        return all(not (isinstance(entry, dict) and entry.get("fields")) for entry in json_block)
+    return False
+
+
 class TextReplyController(BaseController):
     """Phase 1's dual-mode reply logic (Implementation Plan Step 1).
-    Mode A: grounded, retrieval-scaled rewrite — single-chunk for narrow
-    queries, multi-chunk synthesis for broad ones, always in Egyptian
-    Arabic, always closing with a dynamic follow-up question. Mode B:
+    Mode A: grounded, retrieval-scaled rewrite — single-chunk, unwrapped
+    for narrow queries (see _narrow_context_block), multi-chunk wrapped
+    synthesis for broad ones, always in Egyptian Arabic, always closing
+    with a dynamic follow-up question. Mode B:
     verbatim Bucket B/C template substitution, zero LLM involvement.
     Never invents a fact, never paraphrases content the business
     requires exact wording for (claude.md §6.3).
@@ -234,11 +255,83 @@ class TextReplyController(BaseController):
         Pass 1, 2026-08-25 redesign): the model itself now decides which
         field(s) in the full chunk answer the question, replacing the old
         FieldSelectionController pre-filtering step (deleted — this was
-        its only caller). Loops over every chunk in `results` rather than
-        assuming exactly one — correct either way, since
-        whatsapp_retrieval_top_k_narrow is itself a client_config value,
-        never assumed to be 1 in code."""
+        its only caller).
+
+        Deliberately unwrapped, no [BEGIN SOURCE n] boundary — narrow is
+        exactly one chunk (whatsapp_retrieval_top_k_narrow == 1), the
+        same single-chunk shape the fine-tuned model actually trained on.
+
+        2026-08-26 history: top_k_narrow was briefly raised to 3, with
+        this method wrapping multi-chunk narrow CONTEXT the same way
+        broad mode does. Reverted after a real-data retrieval
+        investigation (scripts/investigate_retrieval_task1.py) on the
+        resulting regressions: cases with an overwhelmingly dominant,
+        unambiguous single correct chunk (score 7.08, repeated in every
+        retrieved candidate) still failed to extract once wrapped as
+        multiple sources — retrieval clearly wasn't the bottleneck, so
+        this had to be the untrained wrapped/multi-chunk format itself.
+        One case also showed a concrete, confirmed distractor: a
+        topically-adjacent-but-wrong row (different company, different
+        number, same field label) that only entered the window because
+        top_k_narrow exceeded 1. Widening (Solution 2's retry, still
+        below) now carries the entire "give the model more chunks"
+        responsibility instead — it only escalates to the wrapped,
+        multi-source broad-ceiling format when the single unwrapped
+        chunk's own extraction genuinely comes back empty, never
+        unconditionally."""
         return "\n\n".join(result["chunk"].content for result in results)
+
+    @staticmethod
+    def _wrap_sources(results: list[dict]) -> str:
+        """Wraps each retrieved chunk's full content with an explicit
+        [BEGIN SOURCE n]/[END SOURCE n] boundary. Real testing showed the
+        model misattributing a qualifier from one chunk to an entity
+        named in a different one when chunks were separated only by a
+        bullet "-" and each chunk's own embedded "[Document: ...]"
+        prefix. Used by broad-breadth CONTEXT and by the widening retry's
+        wider context (_mode_a_reply) — never by narrow breadth
+        (_narrow_context_block), which stays single-chunk and unwrapped
+        on purpose (see that method's own docstring for why)."""
+        return "\n\n".join(
+            f"[BEGIN SOURCE {index}]\n{result['chunk'].content}\n[END SOURCE {index}]"
+            for index, result in enumerate(results, start=1)
+        )
+
+    async def _generate_grounded_reply(
+        self, text: str, history: list, system_prompt: str, context_block: str,
+        cross_brand_note: str | None, max_tokens: int,
+    ) -> tuple[object | None, str, str]:
+        """One real generation call against a given context_block,
+        returning (json_block, phrasing, raw_output) via
+        _split_json_and_phrasing — raw_output is passed through
+        unmodified alongside the split, so a caller that needs it (the
+        no-usable-phrasing warning log below) doesn't have to re-derive
+        it from json_block/phrasing. Factored out of _mode_a_reply so the
+        widening retry (breadth == narrow, first attempt's JSON came back
+        completely empty — see _is_json_empty) can re-run this exact same
+        sequence against a wider context_block without duplicating
+        message-building or JSON-split logic. Raises GenerationTimeoutError
+        rather than catching it — the two call sites in _mode_a_reply need
+        different behavior on timeout (the first attempt falls back to
+        GENERATION_UNAVAILABLE_FALLBACK; a timed-out retry just keeps
+        whatever the first attempt already produced), so the decision
+        belongs to the caller, not this helper."""
+        user_sections = [f"CONTEXT:\n{context_block}"]
+        if cross_brand_note:
+            user_sections.append(
+                "NOTE — the above context was found under the OTHER brand than the "
+                f"patient's active filter. Apply this rule when phrasing your reply: {cross_brand_note}"
+            )
+        user_sections.append(f"PATIENT MESSAGE:\n{text}")
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *history,
+            {"role": "user", "content": "\n\n".join(user_sections)},
+        ]
+        raw_output = await self.generation_client.generate_reply(messages, temperature=0.0, max_tokens=max_tokens)
+        json_block, phrasing = _split_json_and_phrasing(raw_output)
+        return json_block, phrasing, raw_output
 
     def _classify_breadth(self, text: str, results: list[dict], client_config) -> str:
         """Deterministic replacement for the old classify_intent(["narrow",
@@ -305,7 +398,19 @@ class TextReplyController(BaseController):
         if it fails. This runs on every real Mode A answer — never on the
         out-of-domain decline or the two earlier fallback returns below,
         which either have no json_block to verify against or are already
-        the safe fallback themselves."""
+        the safe fallback themselves.
+
+        Widening retry (2026-08-26, golden-suite v2 FP-handoff audit): if
+        breadth is narrow and the first generation's own JSON extraction
+        comes back completely empty (_is_json_empty) — the model's own
+        signal that its narrow slice didn't answer the question — this
+        retries generation ONCE against the wider broad-ceiling candidate
+        set already fetched for this same turn (no second retrieval call
+        needed; see all_results below). This never asserts an answer
+        exists — it only gives the model more real evidence and lets it
+        decide again, so it can still decline on the retry. The result,
+        retried or not, still goes through ReplyVerificationController
+        unchanged."""
         history = session_state.get("history", [])
         client_config = await self.client_config_model.get_client_config(client_id)
 
@@ -329,14 +434,16 @@ class TextReplyController(BaseController):
         # unambiguously narrow, because that wrapper only exists on the
         # broad-path branch below — proof the old classifier was routing
         # narrow questions there, which also meant FieldSelectionController
-        # never ran on those turns at all.
+        # never ran on those turns at all. Kept as all_results (never
+        # overwritten) so the widening retry below has the full broad-
+        # ceiling candidate set on hand without a second retrieval call.
         broad_top_k = client_config.whatsapp_retrieval_top_k_broad
-        results = await self.retrieval_controller.retrieve(
+        all_results = await self.retrieval_controller.retrieve(
             client_id=client_id, query=text, metadata_filters=metadata_filters, top_k_override=broad_top_k,
         )
 
         cross_brand_note = None
-        if not results and metadata_filters:
+        if not all_results and metadata_filters:
             # Cross-brand suggestion: before declining, check whether the
             # service exists under the sibling brand and say so plainly,
             # grounded in the real, already-transcribed cross-referral
@@ -345,17 +452,16 @@ class TextReplyController(BaseController):
                 client_id=client_id, query=text, metadata_filters=None, top_k_override=broad_top_k,
             )
             if unfiltered_results:
-                results = unfiltered_results
+                all_results = unfiltered_results
                 cross_brand_note = self.template_parser.resolve(
                     TemplateBucket.C, "directive_brand_cross_referral",
                 )
 
-        breadth = self._classify_breadth(text, results, client_config)
-        if breadth == "narrow":
-            # Slice down to the narrow ceiling only now that breadth is
-            # decided — never re-retrieved, just the same real results
-            # trimmed, so this can't disagree with what was just scored.
-            results = results[:client_config.whatsapp_retrieval_top_k_narrow]
+        breadth = self._classify_breadth(text, all_results, client_config)
+        # Slice down to the narrow ceiling only now that breadth is
+        # decided — never re-retrieved, just the same real all_results
+        # trimmed, so this can't disagree with what was just scored.
+        results = all_results[:client_config.whatsapp_retrieval_top_k_narrow] if breadth == "narrow" else all_results
 
         # No relevance-score gate here (tried and removed): real traffic
         # showed it false-positiving on genuinely in-domain narrow
@@ -384,7 +490,22 @@ class TextReplyController(BaseController):
             # correct 1-2 sentence decline naturally ends was exactly
             # where this specific call drifted into Chinese-script tokens
             # — a short apology never needed 100 tokens to begin with.
-            max_tokens = 60
+            # temperature/decoding history for every generate_reply call
+            # in this method: see the widening-retry block below for the
+            # full 0.1 -> 0.2 -> 0.15 -> 0.0 story; this out-of-domain
+            # call uses the same final value (0.0) for the same reasons.
+            try:
+                raw_output = await self.generation_client.generate_reply(messages, temperature=0.0, max_tokens=60)
+            except GenerationTimeoutError as e:
+                # Root-caused against real Falcon-H1 golden-suite traffic
+                # (Phase 0 bake-off): a slow/eager-mode remote deployment
+                # can legitimately exceed the request timeout. This is one
+                # of two call sites allowed to return non-Bucket-B,
+                # non-model text — see GENERATION_UNAVAILABLE_FALLBACK's
+                # own comment for why.
+                self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
+                return GENERATION_UNAVAILABLE_FALLBACK, None
+            json_block, phrasing = _split_json_and_phrasing(raw_output)
         else:
             system_prompt = self.template_parser.resolve(TemplateBucket.C, "whatsapp_mode_a_reply_directive")
 
@@ -395,20 +516,13 @@ class TextReplyController(BaseController):
                 # explicitly wants breadth here (a summary across several
                 # services), so narrowing down to "the most relevant
                 # field" per chunk would work against the task, not for
-                # it. Each chunk gets explicit structural delimiters —
-                # real testing showed the model misattributing a
-                # qualifier from one chunk to an entity named in a
-                # different one during broad-query synthesis, when
-                # chunks were separated only by a bullet "-" and each
-                # chunk's own embedded "[Document: ...]" prefix. A
-                # numbered [BEGIN SOURCE n]/[END SOURCE n] wrapper gives
-                # the model an explicit, unambiguous boundary to keep
-                # facts scoped to their actual source, without
-                # hardcoding any content.
-                context_block = "\n\n".join(
-                    f"[BEGIN SOURCE {index}]\n{result['chunk'].content}\n[END SOURCE {index}]"
-                    for index, result in enumerate(results, start=1)
-                )
+                # it. Each chunk gets explicit structural delimiters via
+                # _wrap_sources — real testing showed the model
+                # misattributing a qualifier from one chunk to an entity
+                # named in a different one during broad-query synthesis,
+                # when chunks were separated only by a bullet "-" and each
+                # chunk's own embedded "[Document: ...]" prefix.
+                context_block = self._wrap_sources(results)
 
             # INFO: a summary safe to always have on hand (breadth, chunk
             # count, size) without paying the log-file-size or
@@ -421,20 +535,6 @@ class TextReplyController(BaseController):
             # this is real patient-adjacent business content, so it's
             # opt-in verbosity (RAG_LOG_LEVEL=DEBUG), not logged by default.
             self.logger.debug(f"[context] query={text!r} full_context_block=\n{context_block}")
-
-            user_sections = [f"CONTEXT:\n{context_block}"]
-            if cross_brand_note:
-                user_sections.append(
-                    "NOTE — the above context was found under the OTHER brand than the "
-                    f"patient's active filter. Apply this rule when phrasing your reply: {cross_brand_note}"
-                )
-            user_sections.append(f"PATIENT MESSAGE:\n{text}")
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                *history,
-                {"role": "user", "content": "\n\n".join(user_sections)},
-            ]
 
             # Breadth-aware budget — raised from 250/100 after the
             # post-fine-tune golden-suite grading (68.7% run) found ~11/67
@@ -453,45 +553,74 @@ class TextReplyController(BaseController):
             # verbosity change.
             max_tokens = 2048 if breadth == "broad" else 1024
 
-        # temperature history on this call: 0.1 (too greedy — got stuck in
-        # loops when combined with repetition_penalty=1.1, since reverted),
-        # then 0.2 (fixed that, but loosened things enough that the model
-        # started hallucinating numbers/timestamps instead of copying them
-        # from CONTEXT), then 0.15 as the split-the-difference value.
-        # Lowered to 0.0 (greedy decoding) after repeated golden-suite runs
-        # at 0.15 kept landing on the same ~80.6% accuracy with a
-        # DIFFERENT failure mix each time (over-caution vs. hallucination
-        # counts shuffling run to run, same overall total) — real evidence
-        # that a meaningful share of the remaining gap was sampling noise,
-        # not a stable, fixable pattern. 0.0 removes that noise from
-        # evaluation so a future prompt/code change's real effect is
-        # visible in one run instead of needing several averaged together.
-        # Real, disclosed risk carried over from the 0.1 history above:
-        # greedy decoding is generally MORE prone to repetition loops than
-        # mild sampling, since there's no random escape once the model
-        # locks onto a repeating path — watch new golden-suite output for
-        # that exact symptom (a phrase or clause repeated verbatim within
-        # one reply) before trusting this as a durable production value,
-        # not just an eval-time one.
-        try:
-            raw_output = await self.generation_client.generate_reply(messages, temperature=0.0, max_tokens=max_tokens)
-        except GenerationTimeoutError as e:
-            # Root-caused against real Falcon-H1 golden-suite traffic
-            # (Phase 0 bake-off): a slow/eager-mode remote deployment can
-            # legitimately exceed the request timeout. This is the one
-            # call site allowed to return non-Bucket-B, non-model text —
-            # see GENERATION_UNAVAILABLE_FALLBACK's own comment for why.
-            self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
-            return GENERATION_UNAVAILABLE_FALLBACK, None
+            # temperature history on this call: 0.1 (too greedy — got
+            # stuck in loops when combined with repetition_penalty=1.1,
+            # since reverted), then 0.2 (fixed that, but loosened things
+            # enough that the model started hallucinating numbers/
+            # timestamps instead of copying them from CONTEXT), then 0.15
+            # as the split-the-difference value. Lowered to 0.0 (greedy
+            # decoding) after repeated golden-suite runs at 0.15 kept
+            # landing on the same ~80.6% accuracy with a DIFFERENT failure
+            # mix each time (over-caution vs. hallucination counts
+            # shuffling run to run, same overall total) — real evidence
+            # that a meaningful share of the remaining gap was sampling
+            # noise, not a stable, fixable pattern. 0.0 removes that noise
+            # from evaluation so a future prompt/code change's real effect
+            # is visible in one run instead of needing several averaged
+            # together. Real, disclosed risk carried over from the 0.1
+            # history above: greedy decoding is generally MORE prone to
+            # repetition loops than mild sampling, since there's no random
+            # escape once the model locks onto a repeating path — watch
+            # new golden-suite output for that exact symptom (a phrase or
+            # clause repeated verbatim within one reply) before trusting
+            # this as a durable production value, not just an eval-time
+            # one.
+            try:
+                json_block, phrasing, raw_output = await self._generate_grounded_reply(
+                    text, history, system_prompt, context_block, cross_brand_note, max_tokens,
+                )
+            except GenerationTimeoutError as e:
+                self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
+                return GENERATION_UNAVAILABLE_FALLBACK, None
 
-        # The fine-tuned model reasons in JSON first, then phrases the
-        # patient-facing reply from only what that JSON contains — see
-        # _split_json_and_phrasing's own docstring for the three real
-        # cases this covers. The JSON half is never shown to the patient;
-        # it's kept here purely for internal logging (and, later, a
-        # grounding check against context_block if one gets built —
-        # not attempted here).
-        json_block, phrasing = _split_json_and_phrasing(raw_output)
+            # Widening retry: the narrow slice's own JSON extraction came
+            # back completely empty — the model's own signal that the
+            # single unwrapped chunk it saw didn't answer the question.
+            # Retry once against the wider broad-ceiling candidate set
+            # already sitting in all_results (no second retrieval call).
+            # This is now the ONLY mechanism that ever shows the model
+            # more than one chunk on a narrow turn (whatsapp_retrieval_
+            # top_k_narrow reverted to 1, 2026-08-26 — see
+            # _narrow_context_block's docstring for why unconditionally
+            # widening narrow's own top_k caused real regressions instead).
+            # Never fires when breadth was already broad (that's already
+            # the widest this turn's retrieval offers — there's no more
+            # real evidence to give it) or when narrow already saw every
+            # available result (len(all_results) == len(results), e.g.
+            # all_results itself had exactly 1 chunk).
+            if breadth == "narrow" and _is_json_empty(json_block) and len(all_results) > len(results):
+                self.logger.info(
+                    f"[widening_retry] narrow extraction empty for {text!r}, retrying with broad "
+                    f"context ({len(all_results)} sources)"
+                )
+                try:
+                    wider_context_block = self._wrap_sources(all_results)
+                    self.logger.debug(
+                        f"[widening_retry] query={text!r} full_context_block=\n{wider_context_block}"
+                    )
+                    json_block, phrasing, raw_output = await self._generate_grounded_reply(
+                        text, history, system_prompt, wider_context_block, cross_brand_note, max_tokens,
+                    )
+                except GenerationTimeoutError as e:
+                    # Best-effort only — if the retry itself times out,
+                    # silently keep the original (empty-JSON) narrow
+                    # attempt's result rather than failing the whole turn;
+                    # it still flows into the exact same downstream
+                    # empty-phrasing-fallback / ReplyVerificationController
+                    # path it would have without this retry existing.
+                    self.logger.warning(
+                        f"[widening_retry] retry generation timed out for {text!r} ({e}) — keeping original attempt"
+                    )
 
         if json_block is not None:
             # DEBUG, matching this method's existing convention for real

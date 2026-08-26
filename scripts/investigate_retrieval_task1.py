@@ -1,18 +1,40 @@
 #!/usr/bin/env python3
-"""Admin CLI: Task 1 diagnostic (follow-up to the golden-suite v2 audit) —
-runs a handful of real patient queries directly through
-RetrievalController.retrieve() (the exact real call TextReplyController
-makes for a Mode A turn's broad-ceiling retrieval, before breadth
-classification narrows it down) and prints every returned chunk's score,
-sheet, source file, and full field_data, so it's possible to see directly
-whether the fact the model declined to answer with was ever actually
-retrieved at all.
+"""Admin CLI: retrieval diagnostic, v2 — separating the "wrapped-narrow-
+context noise" theory from the "HNSW ranking non-determinism" theory for
+the golden-suite v2 regressions (cases 24/56/69: previously correct,
+single-chunk narrow answers that started producing completely empty
+debug_json once whatsapp_retrieval_top_k_narrow went 1 -> 3), alongside
+the three original under-confidence cases (9/50/60, never correctly
+extracted at any config).
+
+For each case this shows, side by side:
+  - the REAL breadth classification (_classify_breadth, the exact live
+    method — not reimplemented) this query gets against the current
+    broad-ceiling candidate set,
+  - the narrow-window slice (top whatsapp_retrieval_top_k_narrow chunks)
+    that would actually reach the model if breadth classifies narrow,
+  - the full broad-ceiling set (top whatsapp_retrieval_top_k_broad) that
+    the widening retry would fall back to.
+
+How to read the output for cases 24/56/69:
+  - If the expected fact's field/value is visibly sitting inside the
+    NARROW WINDOW's own field_data (i.e. retrieval found it, at the
+    narrow ceiling, same as before) -- that's evidence FOR the noise/
+    format theory: the fact was retrieved, but the wrapped multi-chunk
+    CONTEXT (a shape the fine-tuned model never trained on for narrow
+    breadth) or the extra chunks' noise kept the model from extracting
+    it.
+  - If the expected fact's field/value is NOT visibly present anywhere
+    in either window (narrow or broad) -- that's evidence FOR the
+    ranking/non-determinism theory: this specific run's retrieval
+    genuinely didn't surface the right chunk at all, independent of
+    narrow-vs-broad or wrapping.
 
 This is a debugging aid, not a Verification/Test pass (claude.md §4.3
-draws that line explicitly) — it calls RetrievalController directly rather
-than through the real /api/whatsapp/chat HTTP endpoint, on purpose, since
-the question here is specifically "did retrieval find the right chunk,"
-not an end-to-end endpoint check.
+draws that line explicitly) — it calls RetrievalController directly
+rather than through the real /api/whatsapp/chat HTTP endpoint, on
+purpose, since the question here is specifically "what did retrieval
+actually return," not an end-to-end endpoint check.
 
 A one-shot admin script (claude.md §1.1) — lives under scripts/, never
 imported by src/ at runtime. Mirrors generate_finetuning_dataset.py's own
@@ -43,15 +65,16 @@ from helpers.config import get_settings  # noqa: E402
 from models.ClientConfigModel import ClientConfigModel  # noqa: E402
 from models.ChunkModel import ChunkModel  # noqa: E402
 from controllers.RetrievalController import RetrievalController  # noqa: E402
+from controllers.TextReplyController import TextReplyController  # noqa: E402
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory  # noqa: E402
 from stores.llm.LLMProviderFactory import LLMProviderFactory  # noqa: E402
 from stores.reranker.RerankerProviderFactory import RerankerProviderFactory  # noqa: E402
 
 
-# The three real cases the golden-suite v2 audit flagged: model declined
-# ("المعلومة دي مش متوفرة عندي") with an empty debug_json, on a fact that
-# the same source sheet answered correctly elsewhere in the same run.
 CASES = [
+    # Original under-confidence cases (never correctly extracted at any
+    # top_k config so far — likely a genuine ranking miss, not a
+    # narrow/broad or wrapping artifact).
     {
         "index": 9,
         "query": "لو عايز اضيف رسم عصب بالإبرة على رسم العصب العادي، هياخد فلوس زياده؟",
@@ -68,10 +91,29 @@ CASES = [
         "query": "ممكن اخويا ياخد فلوس الكاش باك بدالي؟",
         "expected_fact": "البند: طريقة الاستلام. الشرط: العميل بنفسه + بطاقة شخصية + إيصال",
     },
+    # New regressions (2026-08-26): correctly answered with a single
+    # clean chunk before whatsapp_retrieval_top_k_narrow was raised 1->3;
+    # now produce completely empty debug_json at both the narrow (3) and
+    # widened-retry (5) window.
+    {
+        "index": 24,
+        "query": "باقة الفحص الشامل للسيدات سعرها كام؟",
+        "expected_fact": "السعر الكلي للباقة: 2000",
+    },
+    {
+        "index": 56,
+        "query": "موافقة عناية مصر مدتها كام يوم؟",
+        "expected_fact": "الشركة: عناية مصر. مده الصلاحية: 7 ايام",
+    },
+    {
+        "index": 69,
+        "query": "نسبة كاش باك كارت لاكي على التحاليل قد ايه بالظبط؟",
+        "expected_fact": "تبلغ نسبة الاسترداد 25% على الفحوصات الإشعاعية و15% على التحاليل المعملية",
+    },
 ]
 
 
-async def build_retrieval_controller():
+async def build_app_context():
     """Same real wiring as main.py's startup_span() / generate_finetuning_dataset.py's
     build_app_context() — same providers, same warmup pattern."""
     settings = get_settings()
@@ -98,17 +140,36 @@ async def build_retrieval_controller():
         client_config_model=client_config_model, chunk_model=chunk_model,
         embedding_client=embedding_client, reranker_client=reranker_client,
     )
-    return retrieval_controller, client_config_model, db_engine
+    # Only used for its _classify_breadth method below (real logic, not
+    # reimplemented) -- the other four collaborators are never touched by
+    # that method, so None is safe here.
+    text_reply_controller = TextReplyController(None, None, None, None, None)
+
+    return retrieval_controller, text_reply_controller, client_config_model, db_engine
+
+
+def _print_window(label, results):
+    if not results:
+        print(f"  {label}: ZERO chunks.")
+        return
+    print(f"  {label} ({len(results)} chunks):")
+    for rank, result in enumerate(results, start=1):
+        chunk = result["chunk"]
+        metadata = chunk.metadata_payload or {}
+        field_data = metadata.get("field_data", {})
+        print(f"    #{rank}  score={result['score']:.4f}  sheet={metadata.get('sheet_name')!r}  "
+              f"source_file={metadata.get('source_file')!r}")
+        print(f"         field_data={field_data}")
 
 
 async def run(client_id: str) -> None:
-    retrieval_controller, client_config_model, db_engine = await build_retrieval_controller()
+    retrieval_controller, text_reply_controller, client_config_model, db_engine = await build_app_context()
     try:
         client_config = await client_config_model.get_client_config(client_id)
-        # Same broad-ceiling call TextReplyController._mode_a_reply makes,
-        # BEFORE breadth classification narrows it down -- the real first
-        # retrieval pass every Mode A turn goes through.
         broad_top_k = client_config.whatsapp_retrieval_top_k_broad
+        narrow_top_k = client_config.whatsapp_retrieval_top_k_narrow
+        print(f"client_config: whatsapp_retrieval_top_k_narrow={narrow_top_k}  "
+              f"whatsapp_retrieval_top_k_broad={broad_top_k}")
 
         for case in CASES:
             print("\n" + "=" * 78)
@@ -116,21 +177,32 @@ async def run(client_id: str) -> None:
             print(f"EXPECTED FACT: {case['expected_fact']}")
             print("-" * 78)
 
-            results = await retrieval_controller.retrieve(
+            # Exact same real broad-ceiling call TextReplyController._mode_a_reply
+            # makes first, unconditionally, before breadth classification.
+            all_results = await retrieval_controller.retrieve(
                 client_id=client_id, query=case["query"], top_k_override=broad_top_k,
             )
 
-            if not results:
-                print("  ZERO chunks retrieved.")
+            if not all_results:
+                print("  ZERO chunks retrieved at the broad ceiling. Nothing to slice.")
                 continue
 
-            for rank, result in enumerate(results, start=1):
-                chunk = result["chunk"]
-                metadata = chunk.metadata_payload or {}
-                field_data = metadata.get("field_data", {})
-                print(f"  #{rank}  score={result['score']:.4f}  sheet={metadata.get('sheet_name')!r}  "
-                      f"source_file={metadata.get('source_file')!r}")
-                print(f"       field_data={field_data}")
+            # Real classification, not reimplemented -- exactly what this
+            # query would get routed as in production right now.
+            breadth = text_reply_controller._classify_breadth(case["query"], all_results, client_config)
+            print(f"  breadth classification: {breadth!r}")
+
+            narrow_window = all_results[:narrow_top_k] if breadth == "narrow" else all_results
+            _print_window(
+                f"NARROW WINDOW (top {narrow_top_k}, what the first generation call would see)"
+                if breadth == "narrow" else "BROAD WINDOW (breadth classified broad, no narrow slice)",
+                narrow_window,
+            )
+            if breadth == "narrow" and len(all_results) > len(narrow_window):
+                _print_window(
+                    f"FULL BROAD-CEILING SET (top {broad_top_k}, what the widening retry would see)",
+                    all_results,
+                )
     finally:
         await db_engine.dispose()
 

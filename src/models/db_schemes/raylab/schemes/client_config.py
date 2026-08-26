@@ -42,6 +42,24 @@ class ClientConfig(SQLAlchemyBase):
     # "what do you offer" question need genuinely different chunk counts,
     # and both must stay config-driven, never a literal inside
     # TextReplyController (claude.md §1.3, §6.3, Implementation Plan Step 1).
+    #
+    # whatsapp_retrieval_top_k_narrow history (2026-08-26): briefly raised
+    # 1 -> 3 to fix a real case (18 — a company contracted under one brand
+    # system but not the other, needing a second row a single-chunk
+    # narrow retrieval couldn't surface). Reverted back to 1 after a
+    # real-data retrieval investigation (scripts/investigate_retrieval_
+    # task1.py) on the regressions it caused: cases with an overwhelming,
+    # unambiguous single correct chunk (top score 7.08, the fact repeated
+    # in every retrieved candidate) still failed to extract once wrapped
+    # as multiple sources — proving retrieval wasn't the bottleneck, the
+    # untrained wrapped/multi-chunk narrow format was. One case also
+    # showed a concrete distractor: a different company's row, same field
+    # label, different number, only in the window because top_k_narrow
+    # exceeded 1. TextReplyController's widening retry (triggers only
+    # when the single unwrapped chunk's own extraction comes back
+    # completely empty) now carries the "give it more chunks" job
+    # instead — same real win for case 18-shaped queries, without paying
+    # the untrained-format cost on every narrow turn.
     whatsapp_retrieval_top_k_narrow = Column(Integer, nullable=False, server_default="1")
     whatsapp_retrieval_top_k_broad = Column(Integer, nullable=False, server_default="5")
 

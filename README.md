@@ -1720,7 +1720,9 @@ originally for a Mode A relevance gate since removed) → `e8b3c9a1f2d7`
 new role as FieldSelectionController's cosine-similarity floor — see "Structured field
 preservation & dynamic field selection" above) → ... → `a7c2e9f4b8d1` (drops the
 `FieldSelectionController`-era columns after its removal in favor of full-chunk narrow CONTEXT) →
-`c5d8f2a934b7` (`human_handoff_queue` — see "Reply verification safety gate" below).
+`c5d8f2a934b7` (`human_handoff_queue` — see "Reply verification safety gate" below) →
+`d9f4a2e7c1b6` (raises `whatsapp_retrieval_top_k_narrow` 1 -> 3) →
+`b3a9f5c2d8e1` (reverts it 3 -> 1 after a real regression — see "Golden-suite v2 FP-handoff fixes" below).
 
 ### New dependencies
 
@@ -1973,6 +1975,62 @@ cd src/models/db_schemes/raylab
 alembic upgrade head
 alembic current   # should show c5d8f2a934b7 (head)
 ```
+
+### Golden-suite v2 FP-handoff fixes (retrieval-widening + prompt scoping)
+
+A 71-case golden-suite v2 audit against the fine-tuned model + Step 8 safety gate found the
+dominant real failure mode wasn't hallucination — it was the model under-confidently declining
+questions whose answer genuinely existed in the source data (18/71 cases), and two hallucinations
+traceable to the same root cause (a needed fact split across rows a single narrow chunk could
+never surface). Three targeted fixes, none touching generation quality on already-correct answers:
+
+- **`client_config.whatsapp_retrieval_top_k_narrow`: tried `1 -> 3`, reverted back to `1`.** A real
+  case (a company contracted under one brand system but not the other) needed a second row from the
+  same sheet that top-1 retrieval structurally could never return, so this was raised — paired with
+  `TextReplyController._narrow_context_block` wrapping multi-chunk narrow CONTEXT the same way
+  broad-breadth answers already do (`[BEGIN SOURCE n]/[END SOURCE n]`, via a new shared
+  `_wrap_sources` helper), but only when more than one chunk actually came back — a single chunk
+  (the common case) kept the exact unwrapped shape the fine-tuned model trained on. A follow-up
+  71-case re-run still showed real regressions: three previously-correct, single-dominant-chunk
+  cases (top reranker score 7.08 in one — the fact repeated in literally every retrieved candidate)
+  started producing completely empty extraction once shown as multiple wrapped sources. A real-data
+  retrieval investigation (`scripts/investigate_retrieval_task1.py`, prints the real narrow-window
+  and broad-ceiling candidates side by side for a given query) confirmed retrieval itself wasn't
+  the bottleneck for these — the untrained wrapped/multi-chunk narrow format was — and surfaced a
+  concrete distractor case: a different company's row, same field label, different number, that
+  only entered the window because top_k_narrow exceeded 1. Reverted `whatsapp_retrieval_top_k_narrow`
+  back to `1` and `_narrow_context_block` back to its original unconditional, unwrapped single-chunk
+  join. `_wrap_sources` stays (still used by broad breadth and by the widening retry below); only
+  narrow's own default and wrapping were reverted.
+- **Widening retry (kept)** — if breadth is narrow and the first generation's own JSON extraction
+  comes back completely empty (`_is_json_empty`, new helper), `_mode_a_reply` retries generation
+  once against the wider broad-ceiling candidate set already fetched for that same turn (zero extra
+  retrieval calls — `all_results` was already sitting in memory before the narrow slice). Never
+  asserts an answer exists; only gives the model more real evidence and lets it decide again, so
+  it can still decline on the retry. A timed-out retry silently keeps the original attempt rather
+  than failing the turn. The result, retried or not, still passes through
+  `ReplyVerificationController` unchanged. New `TextReplyController._generate_grounded_reply`
+  factors the message-build/generate/JSON-split sequence out so both the first attempt and the
+  retry share one code path. This is now the *only* mechanism that ever shows a narrow turn more
+  than one chunk — narrow's own top_k stays 1 unconditionally, and widening only fires when that
+  single chunk's own extraction genuinely comes back empty, not as a blanket policy.
+- **`whatsapp_mode_a_reply_directive`** (Bucket C) gained rule `1ج` (kept, unaffected by the
+  top_k revert): don't volunteer a comparison to a second, nearby fact (another rate, price,
+  branch) unless that second fact is *also* explicitly present in CONTEXT — targets a real case
+  where the model correctly answered the asked question but got rejected by the safety gate for
+  citing an unrelated, ungrounded rate for contrast.
+
+### Database migrations — `whatsapp_retrieval_top_k_narrow` (raised, then reverted)
+
+```bash
+cd src/models/db_schemes/raylab
+alembic upgrade head
+alembic current   # should show b3a9f5c2d8e1 (head)
+```
+
+Chain: `d9f4a2e7c1b6` (raised `1 -> 3`) → `b3a9f5c2d8e1` (reverted `3 -> 1`, per the investigation
+above) — both are real, separate forward migrations; the second was never used to hand-edit the
+first (claude.md: never hand-edit an already-applied migration).
 
 ## Environment variables
 
