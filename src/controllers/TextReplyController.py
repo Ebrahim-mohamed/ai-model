@@ -79,6 +79,54 @@ def _split_json_and_phrasing(raw_output: str) -> tuple[object | None, str]:
     return parsed, phrasing
 
 
+# U+0640 ARABIC TATWEEL — a pure calligraphic justification character
+# (no semantic meaning, never a real letter or a word-separating space)
+# that the source Excel's own header styling inserts between individual
+# letters of field labels, e.g. "اســـم الـفـحـص" (confirmed by direct
+# codepoint inspection of rag_execution.log's real CONTEXT dumps: every
+# instance is literally U+0645 U+0640 U+0640 U+0633..., not repeated
+# plain spaces). Preserved verbatim by ChunkingController per claude.md's
+# real-source-only rule (§3.8) — stripping it here, at prompt-build time
+# only, changes nothing ChunkingController stored or how it was derived;
+# it only removes a decorative artifact that likely fragments these
+# labels into far more subword tokens than the same label unstretched,
+# for a model whose fine-tuning corpus is unlikely to have seen this
+# exact stretched-Arabic-header formatting. Never touches U+0020 (a real
+# word-separating space), so no two real words can ever be merged by
+# this pass.
+_TATWEEL_RE = re.compile("ـ+")
+
+
+def _normalize_context_text(content: str) -> str:
+    """Prompt-build-time-only readability pass over a retrieved chunk's
+    raw content (2026-08-28, golden-suite v2 model-extraction-failure
+    audit) — never touches what's stored, only what the LLM is shown.
+    Two changes, both content-preserving (no character of real business
+    text is added, removed, or reordered — only whitespace changes):
+
+    1. Strips ARABIC TATWEEL (see _TATWEEL_RE above).
+    2. Breaks each ". " (period-then-space) onto its own line. This is a
+       deliberately conservative substitute for "one line per label:value
+       field" — ChunkingController joins fields with exactly this ". "
+       separator (see ChunkingController._concatenate_fields), but by the
+       time content reaches here it's already flattened to one string
+       with no field-boundary markers preserved, and many field VALUES
+       themselves contain multiple ". "-separated sentences (real
+       production examples: multi-sentence "تعليمات الحجز"/"ملاحظات"
+       fields). Re-parsing the flat string to guess which ". " is a real
+       field boundary vs. an ordinary in-value sentence break isn't
+       reliable enough to trust blindly, so this doesn't try — it breaks
+       on every ". " uniformly. That still turns one dense wall-of-text
+       paragraph into a scannable list of lines (the actual goal — real
+       evidence was CONTEXT blocks running 6000-8000 chars as one
+       unbroken paragraph per source), it just doesn't guarantee every
+       line is exactly one field. Never alters, drops, or merges a single
+       character of real content — only some U+0020 spaces after periods
+       become U+000A newlines."""
+    text = _TATWEEL_RE.sub("", content)
+    return text.replace(". ", ".\n")
+
+
 def _is_json_empty(json_block) -> bool:
     """True when json_block extracted nothing at all — an empty dict
     (narrow shape) or a broad-shape list where every source's own fields
@@ -278,8 +326,13 @@ class TextReplyController(BaseController):
         responsibility instead — it only escalates to the wrapped,
         multi-source broad-ceiling format when the single unwrapped
         chunk's own extraction genuinely comes back empty, never
-        unconditionally."""
-        return "\n\n".join(result["chunk"].content for result in results)
+        unconditionally.
+
+        2026-08-28: each chunk's content is passed through
+        _normalize_context_text first — see that helper's own docstring.
+        Presentation-layer only, same real content, never touches what
+        ChunkingController stored."""
+        return "\n\n".join(_normalize_context_text(result["chunk"].content) for result in results)
 
     @staticmethod
     def _wrap_sources(results: list[dict]) -> str:
@@ -291,9 +344,12 @@ class TextReplyController(BaseController):
         prefix. Used by broad-breadth CONTEXT and by the widening retry's
         wider context (_mode_a_reply) — never by narrow breadth
         (_narrow_context_block), which stays single-chunk and unwrapped
-        on purpose (see that method's own docstring for why)."""
+        on purpose (see that method's own docstring for why).
+
+        2026-08-28: each chunk's content is passed through
+        _normalize_context_text first — see that helper's own docstring."""
         return "\n\n".join(
-            f"[BEGIN SOURCE {index}]\n{result['chunk'].content}\n[END SOURCE {index}]"
+            f"[BEGIN SOURCE {index}]\n{_normalize_context_text(result['chunk'].content)}\n[END SOURCE {index}]"
             for index, result in enumerate(results, start=1)
         )
 
