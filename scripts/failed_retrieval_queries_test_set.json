@@ -1,0 +1,167 @@
+[
+  {
+    "patient_query": "هو فرع سليمان أباظة مناسب لو معايا حد بكرسي متحرك؟",
+    "brand_filter": null,
+    "sheet_name": "Branch Directory",
+    "expected_fact": "معلومات الفرع كرسي متحرك:   ",
+    "expected_behavior": "Should confirm wheelchair access is available at Suleiman Abaza (Mohandessin 1) branch.",
+    "actual_reply": "معلومة إمكانية دخول الكرسي المتحرك في فرع سليمان أباظة مش متوفرة عندي هنا يا فندم، بس أقدر أحولك لزميلي المختص يأكدلك الموضوع ده بالظبط. تحب أحولك دلوقتي؟",
+    "session_id": "7b68c152-be1c-422b-a90a-0039ae953832",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "لو عايز اضيف رسم عصب بالإبرة على رسم العصب العادي، هياخد فلوس زياده؟",
+    "brand_filter": null,
+    "sheet_name": "Examinations",
+    "expected_fact": "اذا طلب العميل رسم عصب بالابرة يتم اضافة 500 جنية علي سعر الفحص واختيار خدمات اضافية خلال الحجز واختيار EMG Needle",
+    "expected_behavior": "Should state the needle EMG add-on costs an extra 500 EGP on top of the base exam price.",
+    "actual_reply": "للأسف يا فندم المعلومة دي مش متوفرة عندي هنا، تحب أحولك لزميلي يقولك عليها بالتفصيل؟",
+    "session_id": "b56bd906-df4f-44f2-ad6d-9f376f171399",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "الماموجرام الديجيتال متاح في اي فرع، وهل تقدر حامل تعمله؟",
+    "brand_filter": null,
+    "sheet_name": "Examinations",
+    "expected_fact": "الـفروع Branches: شبرا1 فقط (حاليا متوقف). ... غير متاح ماموجرام للحوامل",
+    "expected_behavior": "Should state it's only offered at Shubra 1 (currently paused) and is not available for pregnant women — should not omit the 'currently paused' caveat.",
+    "actual_reply": "للأسف يا فندم المعلومة دي مش متوفرة عندي هنا، تحب أحوّلك لزميلي يقولك التفاصيل بالظبط؟",
+    "session_id": "f76acaa1-5039-4205-92dc-c9f436896319",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "وزني حوالي 130 كيلو، أقدر اعمل مقطعية شرايين القلب؟",
+    "brand_filter": null,
+    "sheet_name": "Exam Preparation",
+    "expected_fact": "⚠️ تنبيه هام عند الحجز: لا يُجرى هذا الفحص للمرضى الذين يتجاوز وزنهم 120 كيلوجرامًا",
+    "expected_behavior": "Should clearly say this exam is not performed for patients over 120kg, so at 130kg the patient does not qualify — must not soften or omit this.",
+    "actual_reply": "معلومة الوزن الأقصى للفحص ده مش واضحة عندي بالشكل المؤكد يا فندم، وعايزة أتأكدلك منها صح عشان ما أقولكش حاجة غلط. تحب أحولك لزميلي يأكدلك الموضوع ده على طول؟",
+    "session_id": "c60f6c0a-2ff9-42f0-acfe-ad6953232e32",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش واضحة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "الرنين بالصبغة محتاج مني اصوم قبله؟",
+    "brand_filter": null,
+    "sheet_name": "Exam Preparation",
+    "expected_fact": "يتم عمل تحليل Creatinine لا يتعدا 14 يوم  لا يحتاج الي صيام مسبق",
+    "expected_behavior": "Should say no fasting is required, but a recent (within 14 days) Creatinine test is needed.",
+    "actual_reply": "معلومة الصيام للفحص بالصبغة مش واضحة عندي بالشكل المؤكد يا فندم، وعشان كده مش عايزة أقولك حاجة من نفسي وتطلع غلط. تحب أحولك لزميلي يأكدلك الموضوع بالظبط؟",
+    "session_id": "8d626522-8f4e-4cd6-a0e7-c73b4a4b9cb1",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش واضحة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "فيه جهاز رنين مغناطيسي في فرع اليوم الواحد؟",
+    "brand_filter": null,
+    "sheet_name": "الأجهزة والأوزان بالفروع      W",
+    "expected_fact": "الرنين MRI  الوزن: غير متاح",
+    "expected_behavior": "Should say MRI is not available at the Al-Youm Al-Wahed branch (device data marked unavailable).",
+    "actual_reply": "معلومة وجود جهاز رنين مغناطيسي في فرع اليوم الواحد مش متوفرة عندي هنا يا فندم، بس أقدر أحولك لزميلي المختص يقولك عليها بالتأكيد. تحب أحولك دلوقتي؟",
+    "session_id": "6819ea2e-0821-4323-9e90-57c70ddaa1d7",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "لازم اجيب حاجة معايا لفحص مجال الابصار؟",
+    "brand_filter": null,
+    "sheet_name": "الفحوصات ",
+    "expected_fact": "احضار روشتة بنوع الفحص من الطبيب المعالج. احضار مقاس النظارة في حالة ارتداء المريض النظارة الطبية",
+    "expected_behavior": "Should mention bringing a doctor's prescription and glasses prescription if applicable.",
+    "actual_reply": "معلومة الحاجات اللي محتاج تجيبها معاك لفحص مجال الابصار مش متوفرة عندي هنا يا فندم، بس أقدر أحوّلك لزميلي المختص يقولك عليها بالظبط. تحب أعملك كده؟",
+    "session_id": "e83258f5-491a-4328-b9cf-3473be854787",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "خدمة التخدير الكلي متاحة في فرع الحوامدية؟",
+    "brand_filter": null,
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: الحوامديه. Accounts: تكنوسكان",
+    "expected_behavior": "Should confirm anesthesia is available at the El-Hawamdeya (Technoscan) branch.",
+    "actual_reply": "للأسف يا فندم المعلومة دي مش متوفرة عندي بخصوص فرع الحوامدية، تحب أحولك لزميلي يفيدك بالتفاصيل؟",
+    "session_id": "68095a21-2903-4b3e-8305-0eba8ad457cb",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "عايز اعرف لو التخدير الكلي متاح في فرع دار الفؤاد مدينة نصر",
+    "brand_filter": null,
+    "sheet_name": "الــتــخديـــــر الكلي      Ane",
+    "expected_fact": "الـفـروع المتاح بـهــا تـخـديــر: دار الفؤاد مدينة نصر. Accounts: كايروسكان",
+    "expected_behavior": "Should confirm anesthesia is available at Dar El Fouad Nasr City (Cairoscan) branch.",
+    "actual_reply": "للأسف يا فندم المعلومة دي مش متوفرة عندي هنا، وما ينفعش أقولك حاجة من نفسي. تحب أحولك لزميلي يفيدك بالتفاصيل بالظبط؟",
+    "session_id": "11d0c492-21d9-4faf-a1d3-230839fb0237",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "ممكن اخويا ياخد فلوس الكاش باك بدالي؟",
+    "brand_filter": null,
+    "sheet_name": "شروط عرض كارت لاكي",
+    "expected_fact": "البند: طريقة الاستلام. الشرط: العميل بنفسه + بطاقة شخصية + إيصال",
+    "expected_behavior": "Should say no — the patient must collect it in person with their own ID and receipt, not via a relative.",
+    "actual_reply": "للأسف يا فندم المعلومة دي مش متوفرة عندي هنا، تحب أحوّلك لزميلي يفيدك بالتفاصيل؟",
+    "session_id": "a9d6d72d-ed5b-4496-bc91-d8eec17d45d7",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  },
+  {
+    "patient_query": "سعر الصبغة بيتحسب في كاش باك كارت لاكي؟",
+    "brand_filter": null,
+    "sheet_name": "شروط عرض كارت لاكي",
+    "expected_fact": "البند: غير مشمول. الشرط: الصبغة – التخدير – أتعاب الطبيب – أي إضافات",
+    "expected_behavior": "Should say no — contrast dye cost is explicitly excluded from the cashback calculation, along with anesthesia, doctor fees, and add-ons.",
+    "actual_reply": "معلومة حساب الصبغة في كاش باك كارت لاكي مش متوفرة عندي هنا يا فندم، بس أقدر أحولك لزميلي المختص يقولك عليها بالتفصيل. تحب أعملك كده؟",
+    "session_id": "e91ec837-1257-482f-a557-3117fc3ffa83",
+    "failure_reasons": [
+      "EMPTY_OR_APOLOGY (matched phrase: 'مش متوفرة عندي')"
+    ],
+    "context_available": false,
+    "context_match_count": 0,
+    "retrieved_context_snippet": null
+  }
+]

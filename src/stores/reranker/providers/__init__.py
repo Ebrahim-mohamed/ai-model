@@ -1,1 +1,2 @@
 from .CrossEncoderProvider import CrossEncoderProvider
+from .BGERerankerV2M3Provider import BGERerankerV2M3Provider

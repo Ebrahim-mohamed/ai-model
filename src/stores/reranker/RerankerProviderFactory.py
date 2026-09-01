@@ -1,5 +1,5 @@
 from .RerankerEnums import RerankerEnums
-from .providers.CrossEncoderProvider import CrossEncoderProvider
+from .providers import CrossEncoderProvider, BGERerankerV2M3Provider
 
 
 class RerankerProviderFactory:
@@ -14,5 +14,8 @@ class RerankerProviderFactory:
     def create(self, provider: str):
         if provider == RerankerEnums.CROSS_ENCODER.value:
             return CrossEncoderProvider()
+
+        if provider == RerankerEnums.BGE_RERANKER_V2_M3.value:
+            return BGERerankerV2M3Provider()
 
         return None

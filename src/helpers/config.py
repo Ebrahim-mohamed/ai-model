@@ -64,8 +64,14 @@ class Settings(BaseSettings):
     # Config-driven re-ranker provider selection (Step 9) — identical
     # pattern to VECTOR_DB_BACKEND. A new re-ranking vendor is one new
     # providers/ file plus one branch in RerankerProviderFactory.
-    RERANKER_BACKEND_LITERAL: List[str] = ["CROSS_ENCODER"]
-    RERANKER_BACKEND: str = "CROSS_ENCODER"
+    # 2026-09-02: BGE_RERANKER_V2_M3 added as a togglable A/B candidate
+    # (real evidence — a lexical-overlap retrieval failure on PET-CT
+    # queries) — switch RERANKER_BACKEND in .env to test it; default
+    # stays CROSS_ENCODER (the currently-deployed, currently-proven
+    # model) unless/until real traffic shows the swap is worth its extra
+    # latency (see BGERerankerV2M3Provider's own docstring).
+    RERANKER_BACKEND_LITERAL: List[str] = ["CROSS_ENCODER", "BGE_RERANKER_V2_M3"]
+    RERANKER_BACKEND: str = "BGE_RERANKER_V2_M3"
 
     # Celery — task queue config for the on-demand sync trigger (Step 4).
     # No beat/schedule fields exist here on purpose: OneDrive sync is
@@ -93,6 +99,41 @@ class Settings(BaseSettings):
     # showed 5/67 turns exceeding 30s purely on inference latency.
     GENERATION_REQUEST_TIMEOUT_SECONDS: int = 120
 
+    # Dual-model architecture, 2026-08-30 (see README's own history for
+    # the real production evidence behind this): a SEPARATE, lightweight
+    # sidecar dedicated to IntentRoutingController's classify-and-rewrite
+    # call only — GENERATION_* above is reserved for Mode A grounded
+    # reply generation exclusively from this point forward. This is not
+    # the same config-driven-backend-selection pattern as GENERATION_*
+    # (swap which model plays the SAME role) — it's a second, genuinely
+    # independent role, on its own store (stores/query_router/), so it
+    # gets its own base_url/model_name/timeout rather than sharing
+    # GENERATION_*'s.
+    # 2026-09-01: NILE_CHAT_4B retired entirely (real evidence — four
+    # separate prompt-engineering attempts all failed the same generic-
+    # reference anaphora-resolution pattern; see QueryRouterInterface's
+    # own docstring for the full history) and replaced by
+    # NILE_CHAT_12B_BASE — the raw, unadapted MBZUAI-Paris/Nile-Chat-12B
+    # checkpoint Mode A's own fine-tuned GENERATION_BACKEND was trained
+    # FROM, used here in its general-purpose form.
+    QUERY_ROUTER_BACKEND_LITERAL: List[str] = ["NILE_CHAT_12B_BASE"]
+    QUERY_ROUTER_BACKEND: str = "NILE_CHAT_12B_BASE"
+    QUERY_ROUTER_BASE_URL: str
+    QUERY_ROUTER_MODEL_NAME: str = "nile-chat-12b-base"
+    # Deliberately a tighter default than GENERATION_REQUEST_TIMEOUT_SECONDS
+    # (120s) — this call runs in front of every single inbound turn, before
+    # any retrieval, and its own output is always small (150-180 max_tokens
+    # in NileChat12BBaseProvider, vs. up to 2048 for a broad Mode A reply),
+    # so a slow response here should fail fast into its own safe fallback
+    # rather than stall the whole turn as long as Mode A's own generation
+    # budget allows. Nudged 15s -> 20s (2026-09-01) purely for the size
+    # change — this sidecar now runs the same 12B-class model as Mode A
+    # itself, not a smaller 4B one, so per-token latency is real even
+    # though total output length is still small. Still a starting point,
+    # not a calibrated value — revisit with real measured latency once
+    # this deployment has traffic behind it.
+    QUERY_ROUTER_REQUEST_TIMEOUT_SECONDS: int = 20
+
     # Section 3 Step 1 — Tier 1 (Redis) of the two-tier chat-history
     # architecture: active session state (dialogue stage, collected slots,
     # rolling message window), separate from Celery's own broker/result
@@ -100,7 +141,7 @@ class Settings(BaseSettings):
     # field even if it happens to point at the same Redis instance.
     SESSION_REDIS_URL: str
     SESSION_TTL_SECONDS: int = 86400
-    SESSION_HISTORY_WINDOW: int = 20
+    SESSION_HISTORY_WINDOW: int = 6
 
     # Step-by-step RAG pipeline tracing (breadth classification, field
     # selection, final CONTEXT construction — see helpers/logging_config.py).

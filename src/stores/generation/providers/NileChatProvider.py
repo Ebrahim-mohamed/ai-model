@@ -94,17 +94,18 @@ class NileChatProvider(GenerationInterface):
         stop: list[str] | None = NILE_CHAT_STOP_SEQUENCES,
         repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
     ) -> str:
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "repetition_penalty": repetition_penalty,
+        }
         try:
             response = self._session.post(
                 f"{self.base_url}{CHAT_COMPLETIONS_PATH}",
-                json={
-                    "model": self.model_name,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "stop": stop,
-                    "repetition_penalty": repetition_penalty,
-                },
+                json=payload,
                 timeout=self.request_timeout_seconds,
             )
         except requests.exceptions.Timeout as e:
@@ -127,9 +128,23 @@ class NileChatProvider(GenerationInterface):
                 f"NileChatProvider: connection to {self.base_url}{CHAT_COMPLETIONS_PATH} "
                 f"failed after retries ({e.__class__.__name__}: {e})"
             ) from e
-        response.raise_for_status()
-        payload = response.json()
-        return payload["choices"][0]["message"]["content"].strip()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            # TEMPORARY debug logging (2026-08-30) — vLLM's 400 body carries
+            # its actual validation error (context length, malformed
+            # messages array, etc.); requests' own exception text doesn't
+            # include it. Remove once the root cause behind the current
+            # 400s is found and fixed.
+            self.logger.error(
+                f"NileChatProvider: {response.status_code} error from "
+                f"{self.base_url}{CHAT_COMPLETIONS_PATH}\n"
+                f"--- payload sent ---\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+                f"--- response body ---\n{response.text}"
+            )
+            raise
+        response_body = response.json()
+        return response_body["choices"][0]["message"]["content"].strip()
 
     async def generate_reply(
         self,

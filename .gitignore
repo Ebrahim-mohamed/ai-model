@@ -16,7 +16,7 @@ src/models/db_schemes/raylab/alembic.ini
 # Generated per-client Bucket B/C template modules (claude.md §3.5) — these
 # are sync-time output, regenerated wholesale on every run, never hand-authored.
 src/stores/llm/templates/clients/*/
-
+src/rag_execution.log
 # Editor
 .vscode/
 

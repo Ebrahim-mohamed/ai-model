@@ -30,6 +30,27 @@ GENERATION_UNAVAILABLE_FALLBACK = (
     "معذرة، في تأخير مؤقت في الرد دلوقتي. ممكن تجرب تاني بعد شوية؟"
 )
 
+# Same "not Bucket B/C" carve-out as GENERATION_UNAVAILABLE_FALLBACK above
+# — a corrective retry instruction, not real transcribed business content.
+# 2026-09-02 audit finding: on a broad turn with several closely-clustered
+# candidate sources (e.g. 5 topically-adjacent MRI-brain exam variants),
+# the model was observed returning completely empty `fields` for every
+# source in its JSON block while its own phrasing still correctly quoted
+# a real fact from CONTEXT — reproduced twice on identical real traffic.
+# Broad breadth already shows the model the maximal candidate set this
+# turn's retrieval produced (unlike narrow, which can widen to a real
+# superset — see the widening-retry block in _mode_a_reply), so there's
+# no additional real evidence to add on retry; this nudge instead retries
+# the SAME context once with an explicit instruction naming the exact
+# failure pattern observed, asking the model to select and populate the
+# right source's fields before writing the phrasing.
+_BROAD_EMPTY_JSON_RETRY_NUDGE = (
+    "تنبيه: في المحاولة اللي فاتت رجّعت حقول الـ JSON فاضية لكل المصادر "
+    "رغم إن فيه مصدر واحد على الأقل بيجاوب على السؤال. لازم تحدد المصدر "
+    "الصح وتملي حقوله (fields) بالمعلومات اللي هتستخدمها فعلا في ردك "
+    "النصي، قبل ما تكتب الرد."
+)
+
 
 def _split_json_and_phrasing(raw_output: str) -> tuple[object | None, str]:
     """Splits a Mode A generation's raw text into (parsed_json_block,
@@ -241,6 +262,7 @@ class TextReplyController(BaseController):
         generation_client,
         dialogue_state_template_map_model,
         reply_verification_controller,
+        history_window: int,
     ):
         super().__init__()
         self.retrieval_controller = retrieval_controller
@@ -248,13 +270,37 @@ class TextReplyController(BaseController):
         self.generation_client = generation_client
         self.dialogue_state_template_map_model = dialogue_state_template_map_model
         self.reply_verification_controller = reply_verification_controller
+        # Same settings.SESSION_HISTORY_WINDOW value SessionStore itself
+        # uses (main.py wires both from one source) — needed here too
+        # because IntentRoutingController's own [-window:] slice only
+        # trims session_state["history"] AFTER this turn's reply is
+        # generated, to protect the *next* turn. A session hydrated from
+        # Redis/Postgres before a SESSION_HISTORY_WINDOW reduction (or
+        # any other reason its stored history is currently oversized)
+        # would otherwise still have that full, untrimmed history read
+        # and sent to the generation backend for THIS turn — real,
+        # observed behavior (a 400 "context length exceeded" recurring
+        # on an existing session_id even after lowering the config
+        # default) that made the write-time-only slice insufficient.
+        self.history_window = history_window
         self.template_parser = TemplateParser()
         self.logger = logging.getLogger(__name__)
 
-    async def reply(self, client_id: str, session_id, text: str, session_state: dict) -> tuple[str, str, object | None]:
+    async def reply(
+        self, client_id: str, session_id, text: str, resolved_query: str, session_state: dict,
+    ) -> tuple[str, str, object | None]:
         """Returns (reply_text, mode, debug_json) — mode is "mode_a" or
         "mode_b", surfaced for logging/Postman verification, never used
         by the caller to branch (the decision already happened here).
+
+        `resolved_query` (2026-08-30, dual-model architecture) is
+        IntentRoutingController's own dedicated query-router sidecar's
+        history-aware rewrite of `text` — see QueryRouterInterface's own
+        docstring for the full contract. Used only for retrieval inside
+        _mode_a_reply; `text` itself is untouched and is what reaches the
+        patient-facing PATIENT MESSAGE: block, so a short real reply like
+        "اه" still gets a naturally-phrased response, not one that talks
+        as if the patient had typed the rewritten query.
 
         debug_json is the fine-tuned model's own extracted JSON block
         (see _split_json_and_phrasing) for Mode A turns that produced
@@ -275,7 +321,7 @@ class TextReplyController(BaseController):
                 substitutions = self._mode_b_substitutions(session_state)
                 return self.template_parser.resolve(bucket, mapping.template_id, **substitutions), "mode_b", None
 
-        reply_text, json_block = await self._mode_a_reply(client_id, session_id, text, session_state)
+        reply_text, json_block = await self._mode_a_reply(client_id, session_id, text, resolved_query, session_state)
         return reply_text, "mode_a", json_block
 
     def _mode_b_substitutions(self, session_state: dict) -> dict:
@@ -438,13 +484,23 @@ class TextReplyController(BaseController):
         return decision
 
     async def _mode_a_reply(
-        self, client_id: str, session_id, text: str, session_state: dict,
+        self, client_id: str, session_id, text: str, resolved_query: str, session_state: dict,
     ) -> tuple[str, object | None]:
         """Returns (phrasing, json_block) — see reply()'s own docstring
         for what json_block is and who consumes it. json_block is always
         None on the two fallback paths below (a timeout or an unusable
         generation has no JSON to report) and on the out-of-domain decline
         path (never part of this fine-tuning dataset).
+
+        `resolved_query` (2026-08-30, dual-model architecture) drives
+        every retrieval call in this method — RetrievalController.
+        retrieve() has no history of its own, so a short, context-
+        dependent reply would otherwise be embedded and searched
+        literally. `text` (the patient's real, unmodified message) is
+        reserved for the PATIENT MESSAGE: block generation sees, for
+        human_handoff_queue, and for ReplyVerificationController — the
+        reply's own phrasing and the escalation record both reflect what
+        the patient actually typed, never the rewritten query.
 
         The final step, before returning, is ReplyVerificationController's
         safety gate (Implementation Plan's post-fine-tuning Step 8): the
@@ -467,7 +523,10 @@ class TextReplyController(BaseController):
         decide again, so it can still decline on the retry. The result,
         retried or not, still goes through ReplyVerificationController
         unchanged."""
-        history = session_state.get("history", [])
+        # Sliced here, not trusted from session_state as-is — see the
+        # constructor's own comment on why write-time-only truncation
+        # (IntentRoutingController) isn't sufficient on its own.
+        history = session_state.get("history", [])[-self.history_window:]
         client_config = await self.client_config_model.get_client_config(client_id)
 
         # "brand" — not "Account" — matches ChunkingController's real,
@@ -495,7 +554,7 @@ class TextReplyController(BaseController):
         # ceiling candidate set on hand without a second retrieval call.
         broad_top_k = client_config.whatsapp_retrieval_top_k_broad
         all_results = await self.retrieval_controller.retrieve(
-            client_id=client_id, query=text, metadata_filters=metadata_filters, top_k_override=broad_top_k,
+            client_id=client_id, query=resolved_query, metadata_filters=metadata_filters, top_k_override=broad_top_k,
         )
 
         cross_brand_note = None
@@ -505,7 +564,7 @@ class TextReplyController(BaseController):
             # grounded in the real, already-transcribed cross-referral
             # directive rather than an invented instruction.
             unfiltered_results = await self.retrieval_controller.retrieve(
-                client_id=client_id, query=text, metadata_filters=None, top_k_override=broad_top_k,
+                client_id=client_id, query=resolved_query, metadata_filters=None, top_k_override=broad_top_k,
             )
             if unfiltered_results:
                 all_results = unfiltered_results
@@ -513,7 +572,7 @@ class TextReplyController(BaseController):
                     TemplateBucket.C, "directive_brand_cross_referral",
                 )
 
-        breadth = self._classify_breadth(text, all_results, client_config)
+        breadth = self._classify_breadth(resolved_query, all_results, client_config)
         # Slice down to the narrow ceiling only now that breadth is
         # decided — never re-retrieved, just the same real all_results
         # trimmed, so this can't disagree with what was just scored.
@@ -527,6 +586,11 @@ class TextReplyController(BaseController):
         # The retrieved top chunk is trusted unconditionally — the only
         # thing that routes a turn to the out-of-domain path now is
         # retrieval legitimately returning zero chunks.
+        #
+        # Bound here, not inside the branch below, so it stays a real
+        # None (not an undefined name) on the out-of-domain decline path
+        # for the verify_and_gate call at the end of this method.
+        context_block = None
         if not results:
             # Zero retrieved chunks: the out-of-domain directive is
             # deliberately given NO context to draw from, so the model has
@@ -639,44 +703,83 @@ class TextReplyController(BaseController):
                 self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
                 return GENERATION_UNAVAILABLE_FALLBACK, None
 
-            # Widening retry: the narrow slice's own JSON extraction came
-            # back completely empty — the model's own signal that the
-            # single unwrapped chunk it saw didn't answer the question.
-            # Retry once against the wider broad-ceiling candidate set
-            # already sitting in all_results (no second retrieval call).
-            # This is now the ONLY mechanism that ever shows the model
-            # more than one chunk on a narrow turn (whatsapp_retrieval_
-            # top_k_narrow reverted to 1, 2026-08-26 — see
-            # _narrow_context_block's docstring for why unconditionally
-            # widening narrow's own top_k caused real regressions instead).
-            # Never fires when breadth was already broad (that's already
-            # the widest this turn's retrieval offers — there's no more
-            # real evidence to give it) or when narrow already saw every
-            # available result (len(all_results) == len(results), e.g.
-            # all_results itself had exactly 1 chunk).
-            if breadth == "narrow" and _is_json_empty(json_block) and len(all_results) > len(results):
-                self.logger.info(
-                    f"[widening_retry] narrow extraction empty for {text!r}, retrying with broad "
-                    f"context ({len(all_results)} sources)"
-                )
-                try:
-                    wider_context_block = self._wrap_sources(all_results)
-                    self.logger.debug(
-                        f"[widening_retry] query={text!r} full_context_block=\n{wider_context_block}"
+            # Widening retry: the generation's own JSON extraction came
+            # back completely empty — real evidence (2026-08-26 for
+            # narrow; 2026-09-02 for broad) that the model didn't reliably
+            # select/populate fields even when a real answer exists in
+            # CONTEXT. The two breadth paths retry differently because
+            # they have different "more real evidence" available to offer:
+            if _is_json_empty(json_block):
+                if breadth == "narrow" and len(all_results) > len(results):
+                    # Retry once against the wider broad-ceiling candidate
+                    # set already sitting in all_results (no second
+                    # retrieval call) — real additional evidence the
+                    # single unwrapped chunk didn't have. This is now the
+                    # ONLY mechanism that ever shows the model more than
+                    # one chunk on a narrow turn (whatsapp_retrieval_
+                    # top_k_narrow reverted to 1, 2026-08-26 — see
+                    # _narrow_context_block's docstring for why
+                    # unconditionally widening narrow's own top_k caused
+                    # real regressions instead). Never fires when narrow
+                    # already saw every available result (len(all_results)
+                    # == len(results), e.g. all_results itself had exactly
+                    # 1 chunk).
+                    self.logger.info(
+                        f"[widening_retry] narrow extraction empty for {text!r}, retrying with broad "
+                        f"context ({len(all_results)} sources)"
                     )
-                    json_block, phrasing, raw_output = await self._generate_grounded_reply(
-                        text, history, system_prompt, wider_context_block, cross_brand_note, max_tokens,
+                    try:
+                        wider_context_block = self._wrap_sources(all_results)
+                        self.logger.debug(
+                            f"[widening_retry] query={text!r} full_context_block=\n{wider_context_block}"
+                        )
+                        json_block, phrasing, raw_output = await self._generate_grounded_reply(
+                            text, history, system_prompt, wider_context_block, cross_brand_note, max_tokens,
+                        )
+                        # Tracked so ReplyVerificationController's own
+                        # grounding check (below) sees the CONTEXT the
+                        # model was actually shown for this final attempt,
+                        # not the narrower pre-retry one.
+                        context_block = wider_context_block
+                    except GenerationTimeoutError as e:
+                        # Best-effort only — if the retry itself times out,
+                        # silently keep the original (empty-JSON) narrow
+                        # attempt's result rather than failing the whole
+                        # turn; it still flows into the exact same
+                        # downstream empty-phrasing-fallback /
+                        # ReplyVerificationController path it would have
+                        # without this retry existing.
+                        self.logger.warning(
+                            f"[widening_retry] retry generation timed out for {text!r} ({e}) — keeping original attempt"
+                        )
+                elif breadth == "broad":
+                    # Broad already saw the maximal candidate set this
+                    # turn's retrieval produced (results == all_results —
+                    # there's nothing wider to offer). Retry the SAME
+                    # context once with an explicit corrective instruction
+                    # (_BROAD_EMPTY_JSON_RETRY_NUDGE) naming the exact
+                    # failure pattern observed on real traffic — a
+                    # closely-clustered multi-source broad turn returning
+                    # {} fields for every source while the phrasing still
+                    # correctly quoted a real fact, which then failed
+                    # ReplyVerificationController's numeric-grounding check
+                    # for no real reason (see that controller's own
+                    # comment on why context_block is now also passed to
+                    # it, addressing the same root symptom from the other
+                    # side).
+                    self.logger.info(
+                        f"[widening_retry] broad extraction empty for {text!r}, retrying with corrective instruction"
                     )
-                except GenerationTimeoutError as e:
-                    # Best-effort only — if the retry itself times out,
-                    # silently keep the original (empty-JSON) narrow
-                    # attempt's result rather than failing the whole turn;
-                    # it still flows into the exact same downstream
-                    # empty-phrasing-fallback / ReplyVerificationController
-                    # path it would have without this retry existing.
-                    self.logger.warning(
-                        f"[widening_retry] retry generation timed out for {text!r} ({e}) — keeping original attempt"
-                    )
+                    try:
+                        retry_system_prompt = "\n".join([system_prompt, _BROAD_EMPTY_JSON_RETRY_NUDGE])
+                        json_block, phrasing, raw_output = await self._generate_grounded_reply(
+                            text, history, retry_system_prompt, context_block, cross_brand_note, max_tokens,
+                        )
+                    except GenerationTimeoutError as e:
+                        self.logger.warning(
+                            f"[widening_retry] broad retry generation timed out for {text!r} ({e}) — keeping "
+                            f"original attempt"
+                        )
 
         if json_block is not None:
             # DEBUG, matching this method's existing convention for real
@@ -722,7 +825,11 @@ class TextReplyController(BaseController):
         # needs exactly this JSON to see what the model got right in
         # extraction but phrased ungrounded, which is a different, more
         # specific failure than "no real answer was produced at all".
+        # context_block stays None on the zero-chunk out-of-domain decline
+        # path (see its own initialization above) — that path has no
+        # json_block to check against either, so verify_and_gate returns
+        # early on json_block is None regardless.
         verified_reply = await self.reply_verification_controller.verify_and_gate(
-            client_id, session_id, text, phrasing, json_block,
+            client_id, session_id, text, phrasing, json_block, context_block,
         )
         return verified_reply, json_block

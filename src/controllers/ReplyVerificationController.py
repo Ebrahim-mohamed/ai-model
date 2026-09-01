@@ -161,16 +161,47 @@ class ReplyVerificationController(BaseController):
         patient_message: str,
         phrasing: str,
         json_block,
+        context_block: str | None = None,
     ) -> str:
         """Returns the reply text that's actually safe to show the
         patient: `phrasing` unchanged if it passes (or if there's no
         json_block to check it against), REPLY_VERIFICATION_FAILED_FALLBACK
         if it's rejected. Never raises — a bug in this gate must never
-        take down a turn that would otherwise have gone out clean."""
+        take down a turn that would otherwise have gone out clean.
+
+        `context_block` (2026-09-02 audit finding, optional/backward-
+        compatible — defaults to None) is the raw CONTEXT text
+        TextReplyController actually showed the model for this turn's
+        final generation attempt. Folded into the allowed-numbers pool
+        alongside json_block's own extracted values: real production
+        evidence showed the model's own JSON field-selection step is
+        sometimes incomplete — either every source's `fields` comes back
+        empty on a broad turn while the phrasing still correctly quotes a
+        real CONTEXT fact (reproduced twice on identical real traffic:
+        'رنين علي المخ' Creatinine/14-day prep fact), or a specific field
+        is simply never selected even though its value appears verbatim
+        in the phrasing (a CBCT exam's own name, 'CBCT (3D) Single Arch',
+        never captured as a field — flagging the literal '3' inside the
+        exam's own product name as an "unverified numeric claim"). Any
+        number genuinely present in the real CONTEXT the model was shown
+        is by definition not a fabrication, regardless of whether the
+        model's own JSON bookkeeping happened to capture it — this
+        doesn't loosen what counts as a real hallucination (a number that
+        appears nowhere in the real evidence shown this turn), it only
+        fixes the pool of "real evidence" this check was measuring
+        against, which was previously narrower than what the model
+        actually saw. `context_block` is None on the zero-chunk
+        out-of-domain decline path — harmless, since that path also never
+        produces a json_block, and this method already returns early
+        on `json_block is None` before context_block is ever touched."""
         if json_block is None:
             return phrasing
 
-        result = _check_phrasing_numeric_grounding(phrasing, _json_values_text(json_block), patient_message)
+        allowed_values_text = _json_values_text(json_block)
+        if context_block:
+            allowed_values_text = f"{allowed_values_text} {context_block}"
+
+        result = _check_phrasing_numeric_grounding(phrasing, allowed_values_text, patient_message)
         if result.accepted:
             return phrasing
 

@@ -1641,9 +1641,16 @@ operational how-to-run-and-verify-it record, matching every Step 1–9 section a
   chat-history architecture, including hydration from Tier 2 (Postgres `chat_history`) on a cache
   miss.
 - **`utils/intent_routing_map.py`** — the closed `Intent` taxonomy and the data-driven
-  intent → phase routing map. `complaint`/`book_appointment`/`cancel_appointment` currently route
-  to an honest "not implemented yet" reply (Steps 2/5 aren't built) rather than being silently
-  mishandled by the text pipeline.
+  intent → phase routing map. `complaint`/`book_appointment` currently route to an honest "not
+  implemented yet" reply (Steps 2/5 aren't built) rather than being silently mishandled by the text
+  pipeline. **2026-08-31: narrowed from seven intents to exactly three** — `complaint` / `inquiry` /
+  `book_appointment`. `query_price`/`query_schedule`/`query_branch`/`general_inquiry` collapsed
+  into the single `inquiry` catch-all (all four already routed to the same `TEXT_PIPELINE` target,
+  so the finer split was routing-irrelevant); `cancel_appointment` folded into `book_appointment`
+  (both are real booking actions, both already routed to `BOOKING_PIPELINE`); `unclassified` removed
+  entirely — `NileChat12BBaseProvider.classify_intent`'s own failure fallback now returns `"inquiry"`
+  directly, a real member of the closed set, rather than a fourth label the model itself could never
+  legitimately produce.
 - **`routes/whatsapp.py`** (`POST /api/whatsapp/chat`) + `routes/schemes/whatsapp.py` — the
   PoC-simulator text endpoint. Same admin-API-key → `client_id` resolution as `routes/retrieval.py`.
   `ChatResponse` gained `debug_json` (optional, default `null`) — the fine-tuned Mode A model's own
@@ -1655,10 +1662,225 @@ operational how-to-run-and-verify-it record, matching every Step 1–9 section a
   since it never passes it; only Mode A's query-breadth logic uses it.
 - **`client_config`** gained `whatsapp_retrieval_top_k_narrow` (default `1`) and
   `whatsapp_retrieval_top_k_broad` (default `5`) — never a literal inside `TextReplyController`.
+- **`stores/query_router/*`** (`QueryRouterInterface`/`QueryRouterEnums`/`QueryRouterProviderFactory`/
+  `providers/NileChat12BBaseProvider.py`, 2026-08-30, provider replaced 2026-09-01) — a second,
+  independent Ports & Adapters store,
+  deliberately separate from `stores/generation/` (see "Dual-model architecture" below for why).
+  Two methods, `classify_intent()` and `rewrite_query()` (split from one original combined
+  `classify_and_rewrite()` call, 2026-08-31 — see below), replacing the old single-model
+  `classify_intent()` call.
 - New tables: `chat_history` (Tier 2, UUID-anchored, append-only), `intent_log` (Phase 6's
   analytics log, append-only), `dialogue_state_template_map` (data-driven Mode B trigger →
   template_id mapping; seeded with two real rows, `greeting → call_greeting` and
   `closing → call_closing`, both real Bucket B templates).
+
+### Dual-model architecture: query-router sidecar (2026-08-30, provider replaced 2026-09-01)
+
+Multi-turn retrieval has real history in this project: `RetrievalController.retrieve()` embeds a
+bare query string with no history awareness, so a short reply like "اه" — or any message that only
+makes sense given the prior turn — searched literally, returning near-random chunks. Two earlier
+fixes were tried and both were superseded:
+
+1. **`resolved_query` via the same fine-tuned Mode A model.** `IntentRoutingController` called
+   `generation_client.classify_intent()` (the same object `TextReplyController` uses for Mode A
+   generation) asking it to also emit a history-aware rewrite. Real, repeated production evidence
+   showed this call collapsing into Mode A's own heavily-trained JSON-then-phrasing shape regardless
+   of what the classify-and-rewrite prompt actually asked for — e.g. a raw response of a fenced
+   ` ```json ` block containing an empty `{}` followed by a full patient-facing decline sentence,
+   instead of `{"intent": ..., "resolved_query": ...}`. Reverted.
+2. **A deterministic `last_topic_hint` cache + gated retrieval retry** (`_extract_topic_hint`,
+   `_augment_and_retrieve`, topic-drift detection via a relative retrieval-score-improvement check —
+   zero-LLM, no hardcoded thresholds beyond reusing `client_config`'s already-calibrated
+   `whatsapp_breadth_score_gap`). Worked and was verified against real Postman traffic, but was
+   explicitly reverted at the user's direction in favor of a genuine LLM-based rewrite once a model
+   that wouldn't repeat failure #1 was identified.
+
+**Original model choice (2026-08-30, retired 2026-09-01 — see failure #5 below)**: a **second,
+independent model**, `stores/query_router/*`, dedicated *only* to intent classification and query
+rewriting — never used for Mode A generation. Deliberately **not** a base/lighter checkpoint of the
+same Mode A model family reused via `stores/generation/`: the model originally chosen,
+MBZUAI-Paris/Nile-Chat-4B, was a genuinely separate model from the Mode A 12B checkpoint — same
+Egyptian-dialect-specialist research lineage (real prior evidence this family handles this
+project's domain, since the 12B sibling is what Mode A itself is fine-tuned on), but broadly
+instruction/DPO-tuned rather than narrowly LoRA-fine-tuned on one task shape, which is the specific
+property failure #1 exploited. `IntentRoutingController`'s constructor now takes
+`query_router_client` instead of `generation_client` — it has no other use for the Mode A client
+once the old `generation_client.classify_intent()` call is gone (not to be confused with
+`query_router_client.classify_intent()`, the new sidecar's own, unrelated method of the same name).
+`resolved_query` is used only for retrieval inside
+`TextReplyController._mode_a_reply`; the raw patient message (`text`) is untouched everywhere else
+— `PATIENT MESSAGE:`, `chat_history`, `human_handoff_queue` all still show exactly what the patient
+typed. `session_store.py`'s `last_topic_hint` mechanism from fix #2 above is gone entirely — this
+architecture doesn't need it, since the rewritten query is now computed fresh every turn from real
+history by a model built for the job, not a cached deterministic proxy.
+
+**Verified against real multi-turn Postman traffic** (2026-08-31) — and that real traffic surfaced a
+third failure mode, distinct from #1/#2 above, that led to a further refinement:
+
+3. **A single combined `classify_and_rewrite()` call, sharing one system prompt for both intent
+   classification and query rewriting.** Nile-Chat-4B's real, published context length is 2048
+   tokens — much tighter than the 12B Mode A checkpoint's — and this shared prompt (closed intent
+   set + rewrite rules + worked examples, all in one) genuinely overflowed it under real traffic
+   (a live 400 `Bad Request`, `vLLM` error body confirmed via added debug logging). Trimming the
+   guidance to fit measurably *weakened* intent-classification rule-following (a booking-vs-inquiry
+   distinction that worked at full verbosity regressed once shortened), and — separately — a
+   concrete worked example in the rewrite guidance was observed leaking its own literal exam name
+   into a `resolved_query` for a real conversation that never mentioned it (the model anchoring on
+   the example's literal vocabulary instead of generalizing the pattern). Both symptoms trace back
+   to the same root cause: two structurally different tasks forced to share one token budget.
+
+`classify_intent()` and `rewrite_query()` became two separate, sequential calls, each with its own
+full 2048-token budget and its own Bucket C guidance (`whatsapp_intent_classification_guidance`,
+`whatsapp_query_rewrite_guidance`). `whatsapp_query_rewrite_guidance`'s worked examples
+deliberately use abstract bracketed placeholders (`[EXAM_NAME]`, `[ASPECT_ASKED]`) instead of
+concrete Arabic vocabulary, with an explicit instruction that a placeholder must never appear
+literally in the model's own output — directly addressing the anchoring failure mode from #3
+above, since there's no longer any concrete example text left to copy.
+
+**Still not fully resolved** — a fourth failure mode, verified against real multi-turn Postman
+traffic on 2026-09-01:
+
+4. **`classify_intent()` running before `rewrite_query()`, on the raw patient message.** Even with
+   the split above, a generic follow-up ("الفحص"/a possessive suffix meaning "its ___") referring
+   to an exam named several turns earlier kept failing to resolve — the SAME symptom recurring for
+   a third distinct prompt-engineering attempt (after #1's concrete-example collapse and #3's
+   shared-prompt overflow), despite fully abstract guidance this time. Root cause identified as
+   ordering, not wording: `classify_intent()` was still implicitly expected to reason about
+   history/pronouns on the same turn its own routing decision was made, even though that was
+   supposed to be `rewrite_query()`'s job entirely.
+
+CQR (Contextual Query Reformulation): `rewrite_query()` runs FIRST, unconditionally, on every
+turn, before intent is even known. `classify_intent()` receives `rewrite_query()`'s own output as
+its `text` parameter, never the patient's raw message, and its prompt no longer carries any
+pronoun/history-resolution instructions at all — by construction, its input is always already
+standalone. `IntentRoutingController.route_turn`'s own call order is now `rewrite_query()` →
+`classify_intent()` → dispatch, not `classify_intent()` → (conditionally) `rewrite_query()`.
+**Trade-off accepted deliberately**: this removes the "skip `rewrite_query()` for non-RAG
+intents" efficiency gain the split briefly had (§ above) — routing can no longer be decided before
+rewriting happens, so every turn now costs two calls unconditionally, not conditionally one or two.
+`TextReplyController` is unaffected — it still receives the raw patient `text` (untouched, for
+`PATIENT MESSAGE:`/`chat_history`/`human_handoff_queue`) and the resolved standalone query (for
+retrieval) as two separate arguments, exactly as before; only which upstream call produces which
+value, and in what order, changed.
+
+**Also centralized (2026-09-01, same day as the reordering above)**: both calls' fixed protocol
+shells (persona framing, the `<reasoning>` block requirement, the JSON output shape) were extracted
+out of the provider file and into two new Bucket C directives —
+`whatsapp_intent_classification_directive`, `whatsapp_cqr_directive` — so every LLM instruction in
+this project genuinely lives in `system_directives.py`, not split between that file and a provider.
+This required the provider to import `TemplateParser` directly to resolve its own fixed directives
+— the one `stores/` provider in this codebase that does, since every sibling provider instead
+receives its Bucket C content pre-rendered from the calling controller. `guidance` (the
+domain-specific, per-call content) still comes from the caller either way.
+
+**Still not fully resolved even after CQR** — a fifth data point, gathered by adding unconditional
+raw-response logging to `rewrite_query()` and re-testing against real multi-turn Postman traffic:
+
+5. **The 4B checkpoint itself.** Even with CQR reordering and full centralization, the exact same
+   generic-reference anaphora-resolution failure recurred — a **fourth** distinct prompt-engineering
+   strategy failing the identical narrow skill (after #1's concrete-example collapse, #3's
+   shared-prompt overflow, and the ordering fix above). The new raw-response log confirmed this was
+   a genuine reasoning failure, not a parsing bug: `rewrite_query()` returned perfectly valid JSON,
+   `resolved_query` populated, but literally identical to the unresolved raw input — no fallback
+   path ever triggered. Meanwhile every *other* capability on the same checkpoint worked reliably
+   throughout (intent classification, verbatim preservation of already-standalone messages,
+   resolution once given a sufficiently strong literal signal). Four failed attempts concentrated on
+   one narrow skill, while everything else worked, was treated as real evidence of a reliability
+   ceiling specific to that 4B checkpoint's capability on this one task — not something a fifth
+   prompt rewrite was likely to fix.
+
+**Current architecture (2026-09-01)**: `NileChat4BProvider` was deleted entirely — not kept
+alongside a new option — and replaced by `NileChat12BBaseProvider`, serving the **raw, unadapted**
+`MBZUAI-Paris/Nile-Chat-12B` checkpoint (the same base weights Mode A's own `GENERATION_BACKEND`
+was LoRA-fine-tuned FROM, used here in its general-purpose form, deliberately never the fine-tuned
+deployment). `QueryRouterEnums.NILE_CHAT_4B` → `NILE_CHAT_12B_BASE`; `QUERY_ROUTER_MODEL_NAME`
+default `nile-chat-4b` → `nile-chat-12b-base`; `QUERY_ROUTER_REQUEST_TIMEOUT_SECONDS` default
+`15` → `20` (a real, larger model now, not a nudge for any observed slowness). A real,
+credited-but-unproven bet, same status the 4B provider itself started with: general LLM-scaling
+trends make a 3x larger, general-purpose model a credible candidate for reliable multi-step
+reasoning over conversation history, and the base (non-LoRA-adapted) checkpoint doesn't carry the
+narrow collapse risk a fine-tuned sibling would — but that trend hasn't been verified against this
+project's own real traffic for this specific task yet. Real multi-turn Postman traffic is what
+confirms or rejects it, not the size argument alone. Serving notebook:
+`src/fine_tune_nilechat/serve_nilechat12b_base_query_router.ipynb`, adapted from the already-proven
+`src/run_nilechat12b.ipynb` (Phase 0's own bake-off notebook for this exact base checkpoint).
+
+### Dynamic metadata pre-filtering — implemented, then reverted same day (2026-09-02)
+
+**Motivation (real evidence)**: A/B reranker testing (`scripts/ab_test_rerankers_petct.py`) showed
+even a stronger reranker struggling on some queries because the initial vector search (embedding
+recall) was already pulling candidates from the wrong sheet/domain (e.g. `Examinations` rows
+surfacing for a payment-procedure question) — no reranker can recover a chunk that never made it
+into the candidate set. `query_router_client.classify_intent()` was extended to also predict a
+`target_sheet` (sourced from `SchemaRegistryModel.list_sheets(client_id)`, validated against the
+real allowed set, `None` when unconfident), threaded through `IntentRoutingController` into
+`TextReplyController._mode_a_reply`, which added `sheet_name` to `metadata_filters` with a two-tier
+fallback (drop the filter and retry unfiltered on zero results or a weak top score, via a new
+`client_config.whatsapp_sheet_filter_score_threshold`).
+
+**Reverted the same day, after real multi-turn Postman/golden-suite traffic** showed the two-field
+classify_intent task destabilizing the model rather than improving retrieval:
+
+1. **Systematic wrong-sheet guesses.** Real `[sheet_filter]` log lines showed the classifier
+   predicting the exact same incorrect sheet — a truncated, tatweel-decorated raw Excel tab name —
+   for four different, unrelated real `Examinations`-topic questions (MRI, dental X-ray, CBCT,
+   ultrasound), never once landing on the obviously-correct `Examinations` sheet.
+2. **Repetition-loop failures on `classify_intent` itself.** Several real turns showed the model's
+   raw response degenerating into the patient's own message echoed back verbatim 6-12+ times,
+   never producing valid JSON at all — the same greedy-decoding (`temperature=0.0`) repetition risk
+   this file's Mode A section already disclosed, now observed on the classification call too.
+3. **Net effect**: the existing out-of-set validation and two-tier fallback caught every bad guess
+   before it reached a patient (zero regressions), but the feature never once produced a correct,
+   accepted filtered result in real traffic — pure downside (a new LLM failure surface) with no
+   measured retrieval win to offset it.
+
+**Fully reverted, not patched**: `classify_intent()` is back to its pre-2026-09-02 signature and
+JSON schema (`intent` only); `IntentRoutingController`/`TextReplyController` are back to their
+original brand-only retrieval-filter logic; `client_config.whatsapp_sheet_filter_score_threshold`
+removed from the ORM model (migration `a2c8f5e91d34` downgraded — see its own `downgrade()` for the
+exact `DROP COLUMN`); `raylab`'s `allowed_metadata_keys` reverted to `['brand']`. The retrieval
+pre-filtering problem this was meant to solve is still real and still open — a future attempt should
+account for both failure modes above (clean, untruncated sheet labels; and classify_intent's own
+susceptibility to repetition loops under greedy decoding) rather than repeating this exact design.
+
+### False-positive human handoffs on empty JSON extraction (2026-09-02)
+
+**Real evidence** (not a regression — confirmed via `git diff` against the last stable commit that
+neither `whatsapp_mode_a_reply_directive`, `ReplyVerificationController.py`, nor Mode A's real
+generation provider (`NileChatProvider.py`) had any relevant change): `ReplyVerificationController`
+was auto-rejecting correct answers and routing them to `human_handoff_queue`, logged as
+`reason='unverified_numeric_claim'`. Two real, reproduced patterns, both traced to the same root
+symptom — the fine-tuned model's own JSON field-selection step is sometimes incomplete even when its
+phrasing correctly quotes real CONTEXT content:
+
+1. **Broad turn, JSON entirely empty.** A closely-clustered 5-source broad retrieval (topically
+   adjacent MRI-brain exam variants, weak score separation) returned `fields: {}` for every source,
+   while the phrasing still correctly cited a real fact (`14 يوم` Creatinine prep) from Source 1.
+   Reproduced twice on identical real traffic (`"عايزة اعمل رنين علي المخ"`).
+2. **JSON populated, but missing the one field whose value contains the number.** A CBCT case: the
+   branch field was captured, but the exam's own name (`"CBCT (3D) Single Arch"`) never was — so the
+   literal `3` inside that product name got flagged as an unverified numeric claim.
+
+Both fixed together, in `TextReplyController.py` and `ReplyVerificationController.py`:
+
+- **Widening retry extended to `broad` breadth.** The existing empty-JSON widening retry
+  (`_mode_a_reply`) previously only fired for `narrow` (retrying against the wider broad-ceiling
+  candidate set as genuinely new evidence). Broad already sees the maximal candidate set this turn's
+  retrieval produced, so there's no wider evidence to add — instead it retries the SAME
+  `context_block` once with a new, narrowly-scoped corrective instruction
+  (`_BROAD_EMPTY_JSON_RETRY_NUDGE`, same "not Bucket B/C" carve-out as `GENERATION_UNAVAILABLE_FALLBACK`)
+  naming the exact failure pattern and asking the model to select and populate the right source's
+  fields before writing the phrasing.
+- **`ReplyVerificationController.verify_and_gate`** gained an optional `context_block` parameter
+  (backward-compatible, defaults to `None`) — the real CONTEXT text the model was actually shown for
+  its final generation attempt, threaded from `TextReplyController._mode_a_reply` (tracked through
+  both the existing narrow retry and the new broad retry, so it always reflects the FINAL attempt's
+  real context, not a stale pre-retry one). Folded into the grounding check's allowed-numbers pool
+  alongside `json_block`'s own values: a number genuinely present in the real CONTEXT shown this turn
+  is by definition not a fabrication, regardless of whether the model's own JSON bookkeeping happened
+  to capture it. This doesn't loosen what counts as a real hallucination (still a hard reject for any
+  number absent from the real evidence shown) — it only fixes the pool this check measures against,
+  which was previously narrower than what the model actually saw.
 
 ### Structured field preservation & dynamic field selection
 
@@ -2053,6 +2275,8 @@ first (claude.md: never hand-edit an already-applied migration).
 | `GENERATION_BACKEND` / `GENERATION_BACKEND_LITERAL` | `src/.env` | Conversational-LLM provider selection — `QWEN2_5_7B_INSTRUCT` (production default), `FALCON_H1_34B_INSTRUCT`, `NILE_CHAT_12B`, `QWEN2_5_32B_INSTRUCT_AWQ` (Phase 0 bake-off candidates) |
 | `GENERATION_BASE_URL` | `src/.env` | Wherever the OpenAI-compatible endpoint for whichever `GENERATION_BACKEND` is selected is actually served — **placeholder by default**, see Section 3 Step 1's Deployment note and the Phase 0 bake-off section |
 | `GENERATION_MODEL_NAME` / `GENERATION_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Model name sent in the chat-completions request; HTTP timeout |
+| `QUERY_ROUTER_BACKEND` / `QUERY_ROUTER_BACKEND_LITERAL` | `src/.env` | Provider selection for the dedicated `classify_intent()`/`rewrite_query()` sidecar (default/only implemented value `NILE_CHAT_12B_BASE`, replacing the retired `NILE_CHAT_4B`) — see "Dual-model architecture" above for why this is a separate model from `GENERATION_BACKEND` |
+| `QUERY_ROUTER_BASE_URL` / `QUERY_ROUTER_MODEL_NAME` / `QUERY_ROUTER_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Where the query-router sidecar is served, its served model name (default `nile-chat-12b-base`), and its HTTP timeout (deliberately tighter default than `GENERATION_REQUEST_TIMEOUT_SECONDS` — this call runs in front of every turn, before retrieval, and its own output is always small even though the model itself is now the same 12B class as Mode A) |
 | `SESSION_REDIS_URL` / `SESSION_TTL_SECONDS` / `SESSION_HISTORY_WINDOW` | `src/.env` | Tier 1 (Redis) of the two-tier chat-history architecture — Section 3 Step 1 |
 
 ## Project layout

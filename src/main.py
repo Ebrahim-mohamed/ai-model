@@ -19,6 +19,7 @@ from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.reranker.RerankerProviderFactory import RerankerProviderFactory
 from stores.generation.GenerationProviderFactory import GenerationProviderFactory
+from stores.query_router.QueryRouterProviderFactory import QueryRouterProviderFactory
 from utils.session_store import SessionStore
 
 app = FastAPI()
@@ -86,6 +87,21 @@ async def startup_span():
     # a real server (see README).
     app.generation_client = GenerationProviderFactory(config=settings).create(provider=settings.GENERATION_BACKEND)
 
+    # Dual-model architecture, 2026-08-30: a second, independent client
+    # dedicated to IntentRoutingController's classify_intent/rewrite_query
+    # calls (split into two focused calls 2026-08-31 — see
+    # QueryRouterInterface's own docstring for why) — deliberately NOT the
+    # same object as app.generation_client above (see
+    # QueryRouterProviderFactory/NileChat12BBaseProvider's own docstrings
+    # for the real production evidence behind splitting these). Same lazy-fail
+    # rationale as generation_client — not health-checked at boot, a
+    # not-yet-reachable sidecar just means both calls fall back to their
+    # own safe defaults until QUERY_ROUTER_BASE_URL points at a real
+    # server.
+    app.query_router_client = QueryRouterProviderFactory(config=settings).create(
+        provider=settings.QUERY_ROUTER_BACKEND,
+    )
+
     app.chat_history_model = await ChatHistoryModel.create_instance(app.db_client)
     app.dialogue_state_template_map_model = await DialogueStateTemplateMapModel.create_instance(app.db_client)
     app.session_store = SessionStore(
@@ -110,9 +126,10 @@ async def startup_span():
         generation_client=app.generation_client,
         dialogue_state_template_map_model=app.dialogue_state_template_map_model,
         reply_verification_controller=app.reply_verification_controller,
+        history_window=settings.SESSION_HISTORY_WINDOW,
     )
     app.intent_routing_controller = IntentRoutingController(
-        generation_client=app.generation_client,
+        query_router_client=app.query_router_client,
         text_reply_controller=app.text_reply_controller,
         chat_history_model=app.chat_history_model,
         session_store=app.session_store,

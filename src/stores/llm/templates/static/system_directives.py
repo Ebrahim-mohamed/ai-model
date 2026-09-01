@@ -631,54 +631,173 @@ whatsapp_mode_a_reply_directive = Template("\n".join([
     "بالظبط، لازم تقوليها بثقة.",
 ]))
 
-# Real classification-quality issues found on live Postman test traffic:
-# a broad "what services do you offer" question was misclassified as
-# query_branch, and an out-of-scope dental question was misclassified as
-# query_price — both plausible from the bare closed-set label list alone,
-# neither correct. These two directives give IntentRoutingController and
-# TextReplyController's classify_intent calls real worked examples via
-# GenerationInterface's optional `guidance` parameter, rather than
-# expanding the generic classification system prompt with business-
-# specific detail it shouldn't own.
+# 2026-09-01 (centralization): the fixed protocol shell around
+# classify_intent's call -- persona framing, the <reasoning> block
+# requirement, and the JSON output shape -- extracted out of
+# NileChat12BBaseProvider.py into this Bucket C directive, matching how
+# whatsapp_cqr_directive below was centralized for the same reason:
+# "all LLM instructions live in system_directives.py," not split
+# between a provider file and this one. The allowed-intents list itself
+# stays in the provider -- genuinely a per-call runtime value
+# (utils/intent_routing_map.py), not a fixed instruction -- appended as
+# its own line after this directive resolves, the same way `guidance`
+# already is.
+# 2026-09-02 (dynamic metadata pre-filtering, reverted same day): a
+# target_sheet field was briefly added to the output schema to drive a
+# sheet-level retrieval pre-filter. Reverted after real production
+# evidence on live traffic: classify_intent's own repetition-loop
+# failures (the model echoing the patient's message back verbatim
+# dozens of times instead of ever emitting JSON) and systematic
+# wrong-sheet guesses (collapsing to the same incorrect sheet across
+# unrelated real queries) showed the two-field task was measurably
+# harder for the model than intent alone, and the sheet-filter feature
+# itself never once produced an accepted, correct filtered result in
+# that traffic -- the two-tier fallback caught every bad guess before
+# it reached a patient, but the feature added a new failure surface
+# (repetition loops) without a single real win to show for it. Removed
+# outright rather than patched -- see TextReplyController's own git
+# history for the matching removal on the retrieval side.
+whatsapp_intent_classification_directive = Template("\n".join([
+    "You are a senior intent classifier for an Egyptian Arabic "
+    "medical-services WhatsApp assistant.",
+    "First, in a <reasoning>...</reasoning> block, briefly reason in "
+    "1-2 sentences about what the patient is actually asking for "
+    "semantically, and whether the final message on its own already "
+    "signals a clear intent or depends on the conversation above it.",
+    "After the </reasoning> block, on a new line, output a single "
+    "JSON object of the exact shape: {\"intent\": \"<one value>\"} "
+    "and nothing else after it. Never wrap it in a code fence, never "
+    "output it more than once, never add any text after it.",
+    "Classify the final message as given — it is already standalone, "
+    "so classify it directly without needing to resolve anything "
+    "against the conversation history.",
+]))
+
+# Real classification-quality issues found on live Postman test traffic
+# drove this guidance's existence — a bare closed-set label list alone
+# was repeatedly shown insufficient (misclassifications against an
+# earlier, wider seven-value taxonomy; see git history for the specific
+# cases). Resolved via `QueryRouterInterface.classify_intent`'s optional
+# `guidance` parameter, rather than expanding the generic classification
+# system prompt in NileChat12BBaseProvider.py with business-specific detail it
+# shouldn't own. 2026-08-31: the taxonomy itself narrowed to exactly
+# three categories (complaint / inquiry / book_appointment —
+# utils/intent_routing_map.py) — this guidance's rules were rewritten to
+# match, deliberately using generic/structural language rather than
+# literal quotable example sentences (a simple three-way split doesn't
+# need them, and the query-rewriting sidecar's *other* guidance template
+# has real evidence of a model anchoring on a concrete example's literal
+# vocabulary instead of generalizing it — see
+# whatsapp_query_rewrite_guidance's own comment).
 whatsapp_intent_classification_guidance = Template("\n".join([
-    "Semantic description of each intent category — classify by what the "
-    "patient actually wants, never by which keywords their sentence "
-    "happens to contain:",
-    "- query_price: the patient names one specific, identifiable test/scan/"
-    "exam/service AND is asking what it costs in money — e.g. 'سعر تحليل "
-    "السكر كام؟', 'الرنين المغناطيسي بكام؟'. A price intent requires both "
-    "a named item and a cost question; a message that only mentions money-"
-    "adjacent words (تأمين، فلوس، تكلفة) without asking 'how much' for a "
-    "specific named test is NOT query_price.",
-    "- query_schedule: asking about appointment timing/availability/"
-    "working hours for a specific service or branch — e.g. 'إمتى أقدر "
-    "أعمل الأشعة؟', 'انتوا فاتحين لحد الساعة كام؟'.",
-    "- query_branch: asking about a physical branch's location, "
-    "facilities, or accessibility — e.g. 'فرع المهندسين فين؟', 'فيه "
-    "أسانسير؟'.",
-    "- book_appointment / cancel_appointment: an explicit request to "
-    "schedule or cancel a visit, or a clear affirmative/negative reply to "
-    "the assistant's own prior booking-related question.",
-    "- complaint: the patient is unhappy about something that already "
-    "happened (a bad experience, an error, a delay) and is reporting it, "
-    "not asking a forward-looking question.",
-    "- general_inquiry: everything else that is still in-scope for this "
-    "radiology/lab-testing center — including: (a) a broad question about "
-    "what services/scans/tests exist in general (e.g. 'عندكم أشعة إيه؟', "
-    "'ما هي الخدمات المتاحة؟', 'إيه اللي بتعملوه عندكم؟') — this is "
-    "general_inquiry, NOT query_branch and NOT query_price; (b) a "
-    "question about insurance coverage — e.g. 'تأمين بتاعي بيغطي إيه؟', "
-    "'التأمين الصحي بتاعي شغال عندكم؟' — the patient is asking WHAT is "
-    "covered or whether their policy is accepted, not asking the cost of "
-    "one named test, so this is general_inquiry, never query_price just "
-    "because the topic is money-adjacent; (c) a question about a medical "
-    "service this center does not plausibly offer at all (e.g. dentistry/"
-    "orthodontics, surgery, physiotherapy, anything unrelated to "
-    "radiology/imaging/lab testing) — this is general_inquiry, never "
-    "query_price or query_schedule just because the sentence is phrased "
-    "as a question. Do not infer a narrower intent from sentence "
-    "structure or a single money/time-adjacent word alone when the "
-    "underlying request is broader than or unrelated to that keyword.",
+    "Classify by what the patient actually wants, never by keywords "
+    "alone. Exactly three categories exist — every message MUST map "
+    "to one of them, with no other possible label:",
+    "- complaint (شكوى): the patient is reporting something negative "
+    "that ALREADY happened — a bad experience, an error, a delay, a "
+    "service failure. A backward-looking report about the past, not "
+    "a forward-looking request for information or action.",
+    "- book_appointment (حجز): the patient takes a REAL, concrete "
+    "booking action — an explicit request to schedule OR cancel a "
+    "visit, a specific date/time/branch commitment, or a direct "
+    "affirmative/negative reply to the assistant's own prior "
+    "booking-related question. Merely naming a service/exam and "
+    "expressing interest in doing it — with no explicit booking verb "
+    "and no date/time/branch commitment — is NOT book_appointment; "
+    "that patient is still exploring (what it is, where, prep, "
+    "price), which is inquiry. Only classify book_appointment once "
+    "the patient has taken a real, specific step toward actually "
+    "scheduling or cancelling, not merely stated an intention to "
+    "eventually do the exam.",
+    "- inquiry (استفسار): every other in-scope or out-of-scope "
+    "message — any forward-looking question or request for "
+    "information: medical/exam details, preparation instructions, "
+    "pricing, appointment timing/availability, branch location or "
+    "facilities, insurance coverage, a broad 'what services do you "
+    "offer' question, or a topic this center doesn't plausibly "
+    "handle at all. This is the default category — if a message "
+    "doesn't clearly report a past problem (complaint) and doesn't "
+    "take a real, concrete booking action (book_appointment), it is "
+    "inquiry, regardless of the specific topic or keywords involved.",
+]))
+
+# 2026-09-01 (few-shot rewrite): the abstract-placeholder / verbose-rules
+# approach above was replaced after real evidence it did not transfer to
+# the base 12B model either -- the identical generic-reference failure
+# (e.g. اسانسير/تحضيراته left unresolved) recurred on NileChat12BBaseProvider,
+# ruling out "the abstract rules only fail on a small/narrow model" as
+# the explanation. User-directed pivot: teach the pattern via concrete
+# few-shot examples instead of prose rules, on the theory that a
+# general-purpose model pattern-matches a demonstrated input/output
+# shape more reliably than it follows an abstract instruction. Kept
+# deliberately minimal (persona + task + strict output-only
+# instruction) -- the JSON output shape itself is now taught by the
+# worked examples in whatsapp_query_rewrite_guidance below, not
+# described in prose here.
+whatsapp_cqr_directive = Template("\n".join([
+    "You are an AI that rewrites the latest user message into a "
+    "standalone query using the chat history.",
+    "Your ONLY job is to replace any pronouns, vague words (like "
+    "الفحص, الفرع, تحضيراته, بكام), or implicit references with the "
+    "ACTUAL specific names of the exams, branches, or services "
+    "mentioned earlier.",
+    "If the message is already standalone and clear, output it "
+    "exactly as is without changes.",
+    "Output ONLY a single JSON object of the exact shape: "
+    "{\"resolved_query\": \"<string>\"} and nothing else — no reasoning, "
+    "no explanation, no code fence, no extra text before or after it.",
+]))
+
+# 2026-09-01 (few-shot rewrite): replaces the earlier abstract-
+# placeholder rules entirely -- five concrete worked examples, spanning
+# every real entity type this project's data covers (exam/service,
+# branch/location, price/insurance-tier, prep/detail, and an
+# already-standalone case that must NOT be rewritten), so the model
+# learns the general SHAPE of the resolution pattern from real
+# instances rather than an abstract rule description. User-directed;
+# see whatsapp_cqr_directive's own comment above for why the abstract
+# approach was abandoned (it failed identically on both the retired 4B
+# provider and the current base-12B one).
+whatsapp_query_rewrite_guidance = Template("\n".join([
+    "### EXAMPLES ###",
+    "",
+    "Example 1 (Resolving Exam/Service):",
+    "History:",
+    "Patient: عايزة اعمل رنين علي اوردة المخ",
+    "Assistant: الفحص متاح في فروع المهندسين والمعادي...",
+    "Patient: بياخد وقت قد ايه الفحص؟",
+    "Output: {\"resolved_query\": \"بياخد وقت قد ايه فحص رنين على اوردة "
+    "المخ؟\"}",
+    "",
+    "Example 2 (Resolving Branch/Location):",
+    "History:",
+    "Patient: عايزة اعرف عنوان فرع مدينة نصر",
+    "Assistant: العنوان هو برج دار الفؤاد الطبى...",
+    "Patient: طيب وفيها أسانسير؟",
+    "Output: {\"resolved_query\": \"هل فرع مدينة نصر فيه "
+    "أسانسير؟\"}",
+    "",
+    "Example 3 (Resolving Implicit Topic - Pricing/Insurance):",
+    "History:",
+    "Patient: بكام تحليل السكر التراكمي؟",
+    "Assistant: سعر تحليل السكر التراكمي نقدي هو 150 جنيه.",
+    "Patient: طب ولو تبع نقابة المهندسين؟",
+    "Output: {\"resolved_query\": \"سعر تحليل السكر التراكمي "
+    "تبع نقابة المهندسين؟\"}",
+    "",
+    "Example 4 (Resolving Implicit Detail):",
+    "History:",
+    "Patient: محتاج اعمل مقطعية على الصدر",
+    "Assistant: متاح يا فندم، تحب احجزلك؟",
+    "Patient: طيب إيه تحضيراته؟",
+    "Output: {\"resolved_query\": \"إيه تحضيرات فحص مقطعية "
+    "على الصدر؟\"}",
+    "",
+    "Example 5 (Already Standalone - Do Nothing):",
+    "History:",
+    "Patient: بكام تحليل الغدة الدرقية؟",
+    "Output: {\"resolved_query\": \"بكام تحليل الغدة "
+    "الدرقية؟\"}",
 ]))
 
 # Used by TextReplyController._mode_a_reply when retrieval returns zero

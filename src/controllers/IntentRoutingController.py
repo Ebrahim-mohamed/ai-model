@@ -20,13 +20,13 @@ class IntentRoutingController(BaseController):
 
     def __init__(
         self,
-        generation_client,
+        query_router_client,
         text_reply_controller,
         chat_history_model,
         session_store,
     ):
         super().__init__()
-        self.generation_client = generation_client
+        self.query_router_client = query_router_client
         self.text_reply_controller = text_reply_controller
         self.chat_history_model = chat_history_model
         self.session_store = session_store
@@ -49,20 +49,51 @@ class IntentRoutingController(BaseController):
         if brand_filter is not None:
             session_state["brand_filter"] = None if brand_filter == "all" else brand_filter
 
+        # Contextual Query Reformulation (CQR), 2026-09-01 — runs FIRST,
+        # unconditionally, on every turn, before intent is even known.
+        # Real production evidence (three separate prompt-engineering
+        # rounds, all still showing the same anaphora-resolution failure
+        # whenever rewriting was bundled with or made conditional on
+        # classification) drove this reordering: a dedicated,
+        # single-purpose rewrite step run up front removes the need for
+        # classify_intent to reason about pronouns/history at all — it
+        # now always receives an already-standalone query. Trade-off,
+        # accepted deliberately rather than silently: this replaces the
+        # earlier "only rewrite when the intent needs it" efficiency gain
+        # with a flat two-calls-every-turn cost, since routing can no
+        # longer be decided before rewriting happens.
+        rewrite_guidance = self.template_parser.resolve(TemplateBucket.C, "whatsapp_query_rewrite_guidance")
+        standalone_query = await self.query_router_client.rewrite_query(
+            text, session_state.get("history", []), guidance=rewrite_guidance,
+        )
+
         # Real worked examples (a broad "what do you offer" question, an
         # out-of-scope medical question) — the bare closed-set label list
-        # alone was observed misclassifying both on real test traffic.
+        # alone was observed misclassifying real test traffic.
         intent_guidance = self.template_parser.resolve(TemplateBucket.C, "whatsapp_intent_classification_guidance")
-        intent = await self.generation_client.classify_intent(
-            text, get_allowed_intents(), history=session_state.get("history", []), guidance=intent_guidance,
+        # Classifies the CQR-resolved standalone_query, never the raw
+        # text — a short reply like "اه" or a generic follow-up like
+        # "بياخد وقت قد ايه الفحص؟" has already been resolved into a full,
+        # self-contained request by the rewrite step above, so
+        # classify_intent's own prompt no longer needs (and no longer
+        # carries) any pronoun/history-disambiguation instructions of its
+        # own — see NileChat12BBaseProvider.classify_intent's own comment.
+        intent = await self.query_router_client.classify_intent(
+            standalone_query, session_state.get("history", []), get_allowed_intents(), guidance=intent_guidance,
         )
         target = get_routing_target(intent)
 
         mode = None
         debug_json = None
         if target == RoutingTarget.TEXT_PIPELINE.value:
+            # standalone_query is used ONLY for retrieval inside
+            # TextReplyController; `text` itself is untouched and is what
+            # reaches PATIENT MESSAGE:, chat_history, and
+            # human_handoff_queue, so a short real reply like "اه" still
+            # gets a naturally-phrased response, not one that talks as if
+            # the patient had typed the rewritten query.
             reply_text, mode, debug_json = await self.text_reply_controller.reply(
-                client_id, session_id, text, session_state,
+                client_id, session_id, text, standalone_query, session_state,
             )
             routing_outcome = RoutingOutcome.AI_HANDLED
         else:

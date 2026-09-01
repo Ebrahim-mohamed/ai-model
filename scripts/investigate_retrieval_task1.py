@@ -143,7 +143,7 @@ async def build_app_context():
     # Only used for its _classify_breadth method below (real logic, not
     # reimplemented) -- the other four collaborators are never touched by
     # that method, so None is safe here.
-    text_reply_controller = TextReplyController(None, None, None, None, None)
+    text_reply_controller = TextReplyController(None, None, None, None, None, None)
 
     return retrieval_controller, text_reply_controller, client_config_model, db_engine
 
