@@ -260,10 +260,11 @@ def _is_json_empty(json_block) -> bool:
 
 class TextReplyController(BaseController):
     """Phase 1's dual-mode reply logic (Implementation Plan Step 1).
-    Mode A: grounded, retrieval-scaled rewrite — single-chunk, unwrapped
-    for narrow queries (see _narrow_context_block), multi-chunk wrapped
-    synthesis for broad ones, always in Egyptian Arabic, always closing
-    with a dynamic follow-up question. Mode B:
+    Mode A: grounded, retrieval-scaled rewrite — always single-chunk,
+    unwrapped CONTEXT (see _narrow_context_block; 2026-09-02, single-
+    chunk-always change — see _mode_a_reply's own docstring for why the
+    earlier multi-chunk broad-breadth path was retired), always in
+    Egyptian Arabic, always closing with a dynamic follow-up question. Mode B:
     verbatim Bucket B/C template substitution, zero LLM involvement.
     Never invents a fact, never paraphrases content the business
     requires exact wording for (claude.md §6.3).
@@ -447,7 +448,7 @@ class TextReplyController(BaseController):
 
         2026-08-26 history: top_k_narrow was briefly raised to 3, with
         this method wrapping multi-chunk narrow CONTEXT the same way
-        broad mode does. Reverted after a real-data retrieval
+        broad mode used to. Reverted after a real-data retrieval
         investigation (scripts/investigate_retrieval_task1.py) on the
         resulting regressions: cases with an overwhelmingly dominant,
         unambiguous single correct chunk (score 7.08, repeated in every
@@ -457,37 +458,21 @@ class TextReplyController(BaseController):
         One case also showed a concrete, confirmed distractor: a
         topically-adjacent-but-wrong row (different company, different
         number, same field label) that only entered the window because
-        top_k_narrow exceeded 1. Widening (Solution 2's retry, still
-        below) now carries the entire "give the model more chunks"
-        responsibility instead — it only escalates to the wrapped,
-        multi-source broad-ceiling format when the single unwrapped
-        chunk's own extraction genuinely comes back empty, never
-        unconditionally.
+        top_k_narrow exceeded 1.
+
+        2026-09-02 (single-chunk-always change): the broad-breadth
+        wrapped-multi-source path this method used to hand off to on a
+        classification of "broad" (via the now-deleted _wrap_sources
+        helper) was retired outright — see _mode_a_reply's own docstring.
+        This method's own unwrapped, single-chunk CONTEXT shape is now
+        unconditionally what every Mode A turn sends the model,
+        regardless of breadth classification.
 
         2026-08-28: each chunk's content is passed through
         _normalize_context_text first — see that helper's own docstring.
         Presentation-layer only, same real content, never touches what
         ChunkingController stored."""
         return "\n\n".join(_normalize_context_text(result["chunk"].content) for result in results)
-
-    @staticmethod
-    def _wrap_sources(results: list[dict]) -> str:
-        """Wraps each retrieved chunk's full content with an explicit
-        [BEGIN SOURCE n]/[END SOURCE n] boundary. Real testing showed the
-        model misattributing a qualifier from one chunk to an entity
-        named in a different one when chunks were separated only by a
-        bullet "-" and each chunk's own embedded "[Document: ...]"
-        prefix. Used by broad-breadth CONTEXT and by the widening retry's
-        wider context (_mode_a_reply) — never by narrow breadth
-        (_narrow_context_block), which stays single-chunk and unwrapped
-        on purpose (see that method's own docstring for why).
-
-        2026-08-28: each chunk's content is passed through
-        _normalize_context_text first — see that helper's own docstring."""
-        return "\n\n".join(
-            f"[BEGIN SOURCE {index}]\n{_normalize_context_text(result['chunk'].content)}\n[END SOURCE {index}]"
-            for index, result in enumerate(results, start=1)
-        )
 
     async def _generate_grounded_reply(
         self, text: str, history: list, system_prompt: str, context_block: str,
@@ -612,17 +597,46 @@ class TextReplyController(BaseController):
         which either have no json_block to verify against or are already
         the safe fallback themselves.
 
-        Widening retry (2026-08-26, golden-suite v2 FP-handoff audit): if
-        breadth is narrow and the first generation's own JSON extraction
-        comes back completely empty (_is_json_empty) — the model's own
-        signal that its narrow slice didn't answer the question — this
-        retries generation ONCE against the wider broad-ceiling candidate
-        set already fetched for this same turn (no second retrieval call
-        needed; see all_results below). This never asserts an answer
-        exists — it only gives the model more real evidence and lets it
-        decide again, so it can still decline on the retry. The result,
-        retried or not, still goes through ReplyVerificationController
-        unchanged."""
+        Single-chunk-always (2026-09-02, multi-turn CQR audit finding —
+        superseding the breadth-driven multi-chunk design below): real log
+        evidence traced against an actual 4-turn conversation showed
+        RetrievalController consistently ranking the correct chunk #1
+        even on turns _classify_breadth labeled "broad" — the "broad"
+        label was firing because several structurally-identical Branch
+        Directory/Insurance Guide records (same field schema, e.g. every
+        branch has its own "مواعيد الفروع يوم الجمعة" field) score nearly
+        identically for a generic attribute question, not because
+        retrieval itself was wrong. Wrapping those look-alike records
+        together via the now-deleted _wrap_sources was what actually
+        broke the fine-tuned model's own JSON-selection step — it
+        returned completely empty {} extraction across all sources even
+        with the right fact sitting in source 1, and this reproduced
+        regardless of conversation length or CQR (CQR's own resolved_query
+        was independently confirmed correct on every turn via the
+        [breadth] query= log line, which receives resolved_query — see
+        that method's own log line). `results` is therefore now always
+        capped to `client_config.whatsapp_retrieval_top_k_narrow`
+        (currently 1) regardless of what `breadth` says; `breadth` is
+        still computed and logged as a diagnostic signal, but no longer
+        decides chunk count, context shape, token budget, or retry
+        behavior. Real, disclosed trade-off: whatsapp_mode_a_reply_
+        directive's own Rule 5 (a multi-source summary across several
+        services) can no longer be satisfied — every reply is now
+        single-chunk-grounded even for a query that's genuinely asking
+        about several things at once.
+
+        Empty-extraction retry (formerly "widening retry"): if the single
+        chunk's own JSON extraction comes back completely empty
+        (_is_json_empty) — the model's own signal that it didn't ground
+        an answer in what it was shown — this retries generation ONCE
+        against that SAME single chunk with an explicit corrective
+        instruction (_BROAD_EMPTY_JSON_RETRY_NUDGE) naming the exact
+        failure pattern. There is no wider candidate set to escalate to
+        anymore (see the single-chunk-always change above) — this never
+        asserts an answer exists, it only gives the model one more
+        chance at the same real evidence, so it can still decline on the
+        retry. The result, retried or not, still goes through
+        ReplyVerificationController unchanged."""
         # Sliced here, not trusted from session_state as-is — see the
         # constructor's own comment on why write-time-only truncation
         # (IntentRoutingController) isn't sufficient on its own. Also
@@ -679,11 +693,20 @@ class TextReplyController(BaseController):
                     TemplateBucket.C, "directive_brand_cross_referral",
                 )
 
+        # Still computed and logged — a useful diagnostic signal for a
+        # future retrieval-tuning pass (see _classify_breadth's own
+        # [breadth] log line) — but no longer used to decide chunk count.
         breadth = self._classify_breadth(resolved_query, all_results, client_config)
-        # Slice down to the narrow ceiling only now that breadth is
-        # decided — never re-retrieved, just the same real all_results
-        # trimmed, so this can't disagree with what was just scored.
-        results = all_results[:client_config.whatsapp_retrieval_top_k_narrow] if breadth == "narrow" else all_results
+        # Always capped to the narrow ceiling now, regardless of breadth
+        # (2026-09-02, single-chunk-always change — see this method's own
+        # docstring for the multi-turn CQR audit finding behind this: the
+        # correct chunk was consistently ranked #1 by RetrievalController
+        # even on turns classified "broad", and wrapping several
+        # structurally-identical records together was what broke the
+        # model's own JSON-selection step, not the ranking itself). Never
+        # re-retrieved, just the same real all_results trimmed, so this
+        # can't disagree with what was just scored.
+        results = all_results[:client_config.whatsapp_retrieval_top_k_narrow]
 
         # No relevance-score gate here (tried and removed): real traffic
         # showed it false-positiving on genuinely in-domain narrow
@@ -718,9 +741,10 @@ class TextReplyController(BaseController):
             # where this specific call drifted into Chinese-script tokens
             # — a short apology never needed 100 tokens to begin with.
             # temperature/decoding history for every generate_reply call
-            # in this method: see the widening-retry block below for the
-            # full 0.1 -> 0.2 -> 0.15 -> 0.0 story; this out-of-domain
-            # call uses the same final value (0.0) for the same reasons.
+            # in this method: see the empty-extraction retry block below
+            # for the full 0.1 -> 0.2 -> 0.15 -> 0.0 story; this
+            # out-of-domain call uses the same final value (0.0) for the
+            # same reasons.
             try:
                 raw_output = await self.generation_client.generate_reply(messages, temperature=0.0, max_tokens=60)
             except GenerationTimeoutError as e:
@@ -736,20 +760,12 @@ class TextReplyController(BaseController):
         else:
             system_prompt = self.template_parser.resolve(TemplateBucket.C, "whatsapp_mode_a_reply_directive")
 
-            if breadth == "narrow":
-                context_block = await self._narrow_context_block(results)
-            else:
-                # Broad queries keep full multi-chunk content — Rule 5
-                # explicitly wants breadth here (a summary across several
-                # services), so narrowing down to "the most relevant
-                # field" per chunk would work against the task, not for
-                # it. Each chunk gets explicit structural delimiters via
-                # _wrap_sources — real testing showed the model
-                # misattributing a qualifier from one chunk to an entity
-                # named in a different one during broad-query synthesis,
-                # when chunks were separated only by a bullet "-" and each
-                # chunk's own embedded "[Document: ...]" prefix.
-                context_block = self._wrap_sources(results)
+            # Always the single-chunk, unwrapped shape now (2026-09-02,
+            # single-chunk-always change — see this method's own
+            # docstring) — `results` itself is already capped to the
+            # narrow ceiling above, regardless of `breadth`, so there's no
+            # more separate wrapped-multi-source branch to build here.
+            context_block = await self._narrow_context_block(results)
 
             # INFO: a summary safe to always have on hand (breadth, chunk
             # count, size) without paying the log-file-size or
@@ -763,22 +779,22 @@ class TextReplyController(BaseController):
             # opt-in verbosity (RAG_LOG_LEVEL=DEBUG), not logged by default.
             self.logger.debug(f"[context] query={text!r} full_context_block=\n{context_block}")
 
-            # Breadth-aware budget — raised from 250/100 after the
-            # post-fine-tune golden-suite grading (68.7% run) found ~11/67
-            # replies truncated mid-sentence, including 4 where the cutoff
-            # landed inside the JSON reasoning block itself and leaked raw,
-            # unparseable JSON to the patient. The old budgets were sized
-            # around the *training* target-length distribution (max ~230
-            # tokens for the longest broad_positive examples), but real
-            # production CONTEXT/debug_json shapes run longer than that
-            # training sample — narrow turns got cut too (e.g. a single
-            # branch-name field mid-word), not just broad ones. 1024/2048
-            # give real headroom past every truncation case observed in
-            # that grading pass; the model still stops naturally at
-            # NILE_CHAT_STOP_SEQUENCES well before either ceiling on a
-            # normal-length reply, so this is a ceiling raise, not a
-            # verbosity change.
-            max_tokens = 2048 if breadth == "broad" else 1024
+            # Single fixed budget now (2026-09-02, single-chunk-always
+            # change) — the earlier 2048 broad ceiling existed
+            # specifically for multi-source synthesis replies, which can
+            # no longer happen now that context_block is always one
+            # chunk. 1024 was raised from 250/100 after the post-fine-tune
+            # golden-suite grading (68.7% run) found ~11/67 replies
+            # truncated mid-sentence, including 4 where the cutoff landed
+            # inside the JSON reasoning block itself and leaked raw,
+            # unparseable JSON to the patient — real production
+            # CONTEXT/debug_json shapes ran longer than the *training*
+            # target-length distribution this budget was originally sized
+            # around. The model still stops naturally at
+            # NILE_CHAT_STOP_SEQUENCES well before this ceiling on a
+            # normal-length reply, so this is a ceiling, not a verbosity
+            # change.
+            max_tokens = 1024
 
             # temperature history on this call: 0.1 (too greedy — got
             # stuck in loops when combined with repetition_penalty=1.1,
@@ -810,83 +826,43 @@ class TextReplyController(BaseController):
                 self.logger.warning(f"Mode A: generation timed out for {text!r} ({e}) — returning fallback reply")
                 return GENERATION_UNAVAILABLE_FALLBACK, None
 
-            # Widening retry: the generation's own JSON extraction came
-            # back completely empty — real evidence (2026-08-26 for
-            # narrow; 2026-09-02 for broad) that the model didn't reliably
-            # select/populate fields even when a real answer exists in
-            # CONTEXT. The two breadth paths retry differently because
-            # they have different "more real evidence" available to offer:
+            # Empty-extraction retry (2026-09-02, formerly "widening
+            # retry" — renamed now that there's no wider candidate set
+            # left to widen into; see this method's own docstring for the
+            # single-chunk-always change this follows from): the
+            # generation's own JSON extraction came back completely empty
+            # — real evidence that the model didn't reliably select/
+            # populate fields even when a real answer exists in the one
+            # chunk it was shown. Retries the SAME single-chunk
+            # context_block once with an explicit corrective instruction
+            # (_BROAD_EMPTY_JSON_RETRY_NUDGE) naming the exact failure
+            # pattern observed on real traffic — a source returning {}
+            # fields while the phrasing still correctly quoted a real
+            # fact, which then failed ReplyVerificationController's
+            # numeric-grounding check for no real reason (see that
+            # controller's own comment on why context_block is now also
+            # passed to it, addressing the same root symptom from the
+            # other side). No breadth branching anymore — this is now the
+            # only retry path, regardless of what `breadth` said.
             if _is_json_empty(json_block):
-                if breadth == "narrow" and len(all_results) > len(results):
-                    # Retry once against the wider broad-ceiling candidate
-                    # set already sitting in all_results (no second
-                    # retrieval call) — real additional evidence the
-                    # single unwrapped chunk didn't have. This is now the
-                    # ONLY mechanism that ever shows the model more than
-                    # one chunk on a narrow turn (whatsapp_retrieval_
-                    # top_k_narrow reverted to 1, 2026-08-26 — see
-                    # _narrow_context_block's docstring for why
-                    # unconditionally widening narrow's own top_k caused
-                    # real regressions instead). Never fires when narrow
-                    # already saw every available result (len(all_results)
-                    # == len(results), e.g. all_results itself had exactly
-                    # 1 chunk).
-                    self.logger.info(
-                        f"[widening_retry] narrow extraction empty for {text!r}, retrying with broad "
-                        f"context ({len(all_results)} sources)"
+                self.logger.info(
+                    f"[empty_json_retry] extraction empty for {text!r}, retrying with corrective instruction"
+                )
+                try:
+                    retry_system_prompt = "\n".join([system_prompt, _BROAD_EMPTY_JSON_RETRY_NUDGE])
+                    json_block, phrasing, raw_output = await self._generate_grounded_reply(
+                        text, history, retry_system_prompt, context_block, cross_brand_note, max_tokens,
                     )
-                    try:
-                        wider_context_block = self._wrap_sources(all_results)
-                        self.logger.debug(
-                            f"[widening_retry] query={text!r} full_context_block=\n{wider_context_block}"
-                        )
-                        json_block, phrasing, raw_output = await self._generate_grounded_reply(
-                            text, history, system_prompt, wider_context_block, cross_brand_note, max_tokens,
-                        )
-                        # Tracked so ReplyVerificationController's own
-                        # grounding check (below) sees the CONTEXT the
-                        # model was actually shown for this final attempt,
-                        # not the narrower pre-retry one.
-                        context_block = wider_context_block
-                    except GenerationTimeoutError as e:
-                        # Best-effort only — if the retry itself times out,
-                        # silently keep the original (empty-JSON) narrow
-                        # attempt's result rather than failing the whole
-                        # turn; it still flows into the exact same
-                        # downstream empty-phrasing-fallback /
-                        # ReplyVerificationController path it would have
-                        # without this retry existing.
-                        self.logger.warning(
-                            f"[widening_retry] retry generation timed out for {text!r} ({e}) — keeping original attempt"
-                        )
-                elif breadth == "broad":
-                    # Broad already saw the maximal candidate set this
-                    # turn's retrieval produced (results == all_results —
-                    # there's nothing wider to offer). Retry the SAME
-                    # context once with an explicit corrective instruction
-                    # (_BROAD_EMPTY_JSON_RETRY_NUDGE) naming the exact
-                    # failure pattern observed on real traffic — a
-                    # closely-clustered multi-source broad turn returning
-                    # {} fields for every source while the phrasing still
-                    # correctly quoted a real fact, which then failed
-                    # ReplyVerificationController's numeric-grounding check
-                    # for no real reason (see that controller's own
-                    # comment on why context_block is now also passed to
-                    # it, addressing the same root symptom from the other
-                    # side).
-                    self.logger.info(
-                        f"[widening_retry] broad extraction empty for {text!r}, retrying with corrective instruction"
+                except GenerationTimeoutError as e:
+                    # Best-effort only — if the retry itself times out,
+                    # silently keep the original (empty-JSON) attempt's
+                    # result rather than failing the whole turn; it still
+                    # flows into the exact same downstream empty-phrasing-
+                    # fallback / ReplyVerificationController path it would
+                    # have without this retry existing.
+                    self.logger.warning(
+                        f"[empty_json_retry] retry generation timed out for {text!r} ({e}) — keeping original attempt"
                     )
-                    try:
-                        retry_system_prompt = "\n".join([system_prompt, _BROAD_EMPTY_JSON_RETRY_NUDGE])
-                        json_block, phrasing, raw_output = await self._generate_grounded_reply(
-                            text, history, retry_system_prompt, context_block, cross_brand_note, max_tokens,
-                        )
-                    except GenerationTimeoutError as e:
-                        self.logger.warning(
-                            f"[widening_retry] broad retry generation timed out for {text!r} ({e}) — keeping "
-                            f"original attempt"
-                        )
 
         if json_block is not None:
             # DEBUG, matching this method's existing convention for real
