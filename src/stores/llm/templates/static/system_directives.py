@@ -566,6 +566,22 @@ whatsapp_mode_a_reply_directive = Template("\n".join([
     "موجودة صراحة قدامك، جاوبي بس على السؤال المسؤول عنه من غير ما "
     "تقارنيه بحاجة تانية.",
     "",
+    "1د. الحسم في استخراج الميزة/الحالة (JSON): دي قاعدة بنائية عامة "
+    "تنطبق على أي ميزة أو خدمة موجودة في الـ CONTEXT، مهما كان اسمها — "
+    "لو الـ CONTEXT بيقول بالصيغة دي: '[اسم الميزة أو الخدمة]: [الحالة]' "
+    "(زي 'متاح' / 'غير متاح' / أي حالة تانية مكتوبة صراحة)، والمريض سأل "
+    "عن الميزة دي بالظبط أو بمرادف مباشر ليها، لازم تحطي الحالة دي "
+    "بالظبط جوه بلوك الـ JSON بتاعك. ممنوع تسيبي بلوك الـ JSON فاضي {} "
+    "في الحالة دي — بلوك فاضي معناه إن الحقيقة مش موجودة أصلاً في الـ "
+    "CONTEXT، مش إنك مترددة أو حابة تتأكدي أكتر.",
+    "",
+    "1ه. قاعدة منع التهرب: لو الكلمة أو الكلمات المفتاحية اللي سأل عنها "
+    "المريض (أو مرادف مباشر ليها، بأي صياغة) موجودة حرفيًا في أي مصدر من "
+    "مصادر الـ CONTEXT اللي قدامك، لازم تستخرجيها جوه الـ JSON — ممنوع "
+    "تختاري بلوك فاضي بدافع الحرص الزايد أو الخوف من الغلط. الحرص "
+    "المبالغ فيه في الاستخراج، مع وجود الحقيقة فعليًا قدامك بالحرف، هو "
+    "نفسه خطأ زي اختراع حقيقة مش موجودة — مش سلوك آمن أو محافظ.",
+    "",
     "إذا سأل المريض عن خدمة طبية، جراحة، أو تخصص (مثل زراعة "
     "الأسنان أو الكشف الطبي) غير مذكور ومطابق حرفياً لما هو موجود في الـ "
     "CONTEXT، يجب عليك فوراً الاعتذار بلباقة وإخباره أن هذه الخدمة غير "
@@ -689,6 +705,27 @@ whatsapp_intent_classification_directive = Template("\n".join([
 # has real evidence of a model anchoring on a concrete example's literal
 # vocabulary instead of generalizing it — see
 # whatsapp_query_rewrite_guidance's own comment).
+#
+# 2026-09-02 (multi-LoRA consolidation smoke test finding): real traffic
+# against the consolidated server reproduced (2/2, not sampling noise) a
+# misclassification of "عايز اعمل رسم عصب لابني اللي عنده 5 سنين" (a
+# service named with the action verb "اعمل"/"do", no branch, no date/
+# time) as book_appointment instead of inquiry — exactly the case the
+# prose rule above already describes, just not reliably followed.
+# User-directed fix: a "Few-Shot Examples" section using GENERALIZED
+# bracket-placeholder patterns (never a specific real exam name or exact
+# phrase), deliberately NOT the concrete-example approach that fixed
+# whatsapp_query_rewrite_guidance — that task needed the model to COPY a
+# real name out of history, where a concrete example risked anchoring on
+# its literal vocabulary; this task needs the model to recognize a
+# STRUCTURAL pattern (presence/absence of a logistical commitment) that
+# must generalize across every real service in the database, which a
+# hardcoded example would work against instead of for. Real evidence
+# open question, not yet resolved: whether generalized placeholders hold
+# up here the way concrete examples did for CQR, or whether this guidance
+# eventually needs the same concrete-example pivot if the pattern-based
+# version doesn't transfer reliably — watch real traffic after this
+# change the same way CQR's own iterations were watched.
 whatsapp_intent_classification_guidance = Template("\n".join([
     "Classify by what the patient actually wants, never by keywords "
     "alone. Exactly three categories exist — every message MUST map "
@@ -719,6 +756,32 @@ whatsapp_intent_classification_guidance = Template("\n".join([
     "doesn't clearly report a past problem (complaint) and doesn't "
     "take a real, concrete booking action (book_appointment), it is "
     "inquiry, regardless of the specific topic or keywords involved.",
+    "",
+    "### FEW-SHOT PATTERNS (inquiry vs. book_appointment) ###",
+    "These are STRUCTURAL patterns, not literal sentences to match — "
+    "[Service/Exam Name] and [Branch Name] are placeholders standing in "
+    "for whatever real service or branch the patient actually names. "
+    "Never treat the bracketed words themselves, or the specific "
+    "example service, as meaningful — apply the same structural logic "
+    "to any real service name in the database.",
+    "",
+    "Pattern 1 — Action verb WITHOUT logistical commitment -> inquiry:",
+    "Shape: [Desire/Action Verb] + [Any Service/Exam Name] + (no branch) "
+    "+ (no date/time).",
+    "Example: 'عايز أعمل [اسم الفحص]' / 'I want to do [Service Name]'.",
+    "Reasoning: the patient is expressing intent but has given no "
+    "concrete logistical detail — nothing here actually schedules "
+    "anything yet.",
+    "",
+    "Pattern 2 — Action verb WITH logistical commitment -> "
+    "book_appointment:",
+    "Shape: [Desire/Action Verb] + [Any Service/Exam Name] + ([Specific "
+    "Branch] OR [Specific Date/Time]).",
+    "Example: 'عايز أعمل [اسم الفحص] بكرة في فرع [اسم الفرع]' / 'I want "
+    "to do [Service Name] tomorrow at [Branch Name]'.",
+    "Reasoning: a real temporal or spatial commitment is what upgrades "
+    "the message from exploring an option to an actionable booking "
+    "request — the service name alone, however specific, never does.",
 ]))
 
 # 2026-09-01 (few-shot rewrite): the abstract-placeholder / verbose-rules

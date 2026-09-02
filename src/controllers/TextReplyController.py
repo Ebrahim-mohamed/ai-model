@@ -3,6 +3,7 @@ import logging
 import re
 
 from .BaseController import BaseController
+from .ReplyVerificationController import REPLY_VERIFICATION_FAILED_FALLBACK
 from stores.llm.templates.template_parser import TemplateParser, TemplateBucket
 from stores.generation.GenerationInterface import GenerationTimeoutError
 
@@ -50,6 +51,95 @@ _BROAD_EMPTY_JSON_RETRY_NUDGE = (
     "الصح وتملي حقوله (fields) بالمعلومات اللي هتستخدمها فعلا في ردك "
     "النصي، قبل ما تكتب الرد."
 )
+
+# Phrase fragments that reliably signal a PAST assistant turn (as it sits
+# in session_state["history"]) was a decline, apology, or generation
+# fallback rather than a real grounded answer — 2026-09-02 self-
+# reinforcing-decline-loop finding: at temperature=0.0 (fully greedy
+# decoding — see _generate_grounded_reply's own temperature history for
+# why this is 0.0), a decline sitting in *history* acts as a strong
+# imitated precedent on the very next turn even when that next turn's own
+# CONTEXT genuinely answers the question, since greedy decoding has no
+# randomness to escape the pattern once the model locks onto "last time I
+# declined, so I'll decline again." whatsapp_out_of_domain_directive's own
+# output is deliberately free-form Arabic (see that directive's own
+# docstring/comment), so unlike GENERATION_UNAVAILABLE_FALLBACK and
+# REPLY_VERIFICATION_FAILED_FALLBACK below there is no single fixed
+# string to match against for that path — this tuple is a heuristic over
+# real observed decline/apology phrasing, not an exhaustive contract.
+# Extend it, don't rewrite the filtering logic, if a new recurring
+# decline phrasing is observed on real traffic.
+_DECLINE_PHRASE_MARKERS = (
+    "معذرة",        # apology opener shared by both fixed fallbacks above
+    "آسف",          # "آسف/آسفة/آسفين" — sorry, any gender/number ending
+    "مش واضح",      # e.g. "مش واضحة عندي بالشكل الكافي" — hedged non-answer
+    "مش متأكد",     # hedged non-answer / can't confirm
+    "مش متخصص",     # out-of-domain directive's own "specialization" framing
+    "برا التخصص",   # "outside our specialization" — same directive framing
+    "مش بنقدم",     # "we don't offer/provide this"
+    "حد من الفريق",  # human-handoff phrasing (REPLY_VERIFICATION_FAILED_FALLBACK
+                     # and PENDING_PHASE_REPLY-style turns alike)
+)
+
+
+def _is_decline_or_fallback_reply(content: str) -> bool:
+    """True when a stored assistant history turn was a decline, apology,
+    or generation fallback rather than a real grounded answer — see
+    _DECLINE_PHRASE_MARKERS' own comment for why this can't be a strict
+    equality check for every such turn. The two fixed fallback strings
+    (generation timeout, verification-gate rejection) are matched exactly
+    first since those really are fixed, known strings; the out-of-domain
+    decline path's genuinely free-form phrasing then falls to the marker
+    heuristic."""
+    if content in (GENERATION_UNAVAILABLE_FALLBACK, REPLY_VERIFICATION_FAILED_FALLBACK):
+        return True
+    return any(marker in content for marker in _DECLINE_PHRASE_MARKERS)
+
+
+def _filter_decline_history(history: list) -> list:
+    """Drops any assistant turn matched by _is_decline_or_fallback_reply
+    from a history list, ALONG WITH the user turn immediately preceding
+    it, keeping every other turn in original order. Applied to *history*
+    right before it's injected into a Mode A generation prompt (see the
+    history retrieval in _mode_a_reply) so the model never sees its own
+    past decline/fallback/apology as conversational precedent — see
+    _DECLINE_PHRASE_MARKERS' own comment for the production incident this
+    fixes.
+
+    2026-09-02 (paired-removal fix): a first version of this function
+    dropped only the assistant turn via a plain list comprehension,
+    leaving the user question that prompted it stranded in the filtered
+    result. That orphaned user turn then sat next to whatever real turn
+    followed, producing two consecutive `role: user` entries — vLLM's
+    chat template enforces strict user/assistant/user/assistant
+    alternation, so rendering that history raised `jinja2.exceptions.
+    TemplateError: Conversation roles must alternate user/assistant/
+    user/assistant/...` the next time this filtered history reached
+    generate_reply(). Removing the question along with its declined
+    answer keeps the surviving turns correctly alternating, at the cost
+    of also losing that one real question from history — an acceptable
+    trade-off: a question the model failed to ground is worth less as
+    context than an alternation-breaking prompt that crashes the turn
+    outright.
+
+    Walks history in original order, appending to (and popping from) a
+    single output list, rather than a role-blind list comprehension, so
+    each decision can see whatever the previous turn just did. Popping
+    is guarded by `filtered and filtered[-1].get("role") == "user"`:
+    a well-formed alternating history always has a user turn immediately
+    before any assistant turn, but a window slice can legitimately land
+    history's very first element on an assistant turn with nothing
+    before it in `filtered` yet to pop — that guard makes this a no-op
+    drop instead of a crash in that edge case, rather than assuming the
+    pop is always safe."""
+    filtered: list = []
+    for turn in history:
+        if turn.get("role") == "assistant" and _is_decline_or_fallback_reply(turn.get("content", "")):
+            if filtered and filtered[-1].get("role") == "user":
+                filtered.pop()
+            continue
+        filtered.append(turn)
+    return filtered
 
 
 def _split_json_and_phrasing(raw_output: str) -> tuple[object | None, str]:
@@ -417,7 +507,17 @@ class TextReplyController(BaseController):
         different behavior on timeout (the first attempt falls back to
         GENERATION_UNAVAILABLE_FALLBACK; a timed-out retry just keeps
         whatever the first attempt already produced), so the decision
-        belongs to the caller, not this helper."""
+        belongs to the caller, not this helper.
+
+        `history` is re-filtered here via _filter_decline_history even
+        though _mode_a_reply's own history retrieval already filters it
+        before the first call — this method is the single place that
+        actually builds the `messages` list sent to the model, so this is
+        a deliberate defense-in-depth: a future caller/retry path that
+        forgets to pre-filter still can't leak a decline/fallback/apology
+        turn into the prompt. Filtering an already-filtered list is a
+        cheap no-op, not wasted work."""
+        history = _filter_decline_history(history)
         user_sections = [f"CONTEXT:\n{context_block}"]
         if cross_brand_note:
             user_sections.append(
@@ -525,8 +625,15 @@ class TextReplyController(BaseController):
         unchanged."""
         # Sliced here, not trusted from session_state as-is — see the
         # constructor's own comment on why write-time-only truncation
-        # (IntentRoutingController) isn't sufficient on its own.
-        history = session_state.get("history", [])[-self.history_window:]
+        # (IntentRoutingController) isn't sufficient on its own. Also
+        # filtered here (_filter_decline_history) so a past decline/
+        # fallback/apology assistant turn is never handed to the LLM as
+        # conversational precedent — see that helper's own comment for
+        # the self-reinforcing decline loop this closes. Filtering AFTER
+        # the window slice, not before: the window is sized in real turns
+        # of genuine conversation, and a decline turn still occupied a
+        # real turn of that budget when it happened.
+        history = _filter_decline_history(session_state.get("history", [])[-self.history_window:])
         client_config = await self.client_config_model.get_client_config(client_id)
 
         # "brand" — not "Account" — matches ChunkingController's real,

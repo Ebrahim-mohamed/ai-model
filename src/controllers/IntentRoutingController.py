@@ -1,4 +1,5 @@
 from .BaseController import BaseController
+from .TextReplyController import _filter_decline_history
 from utils.intent_routing_map import get_routing_target, get_allowed_intents, RoutingTarget
 from models.IntentLogModel import RoutingOutcome
 from models.ChatHistoryModel import MessageDirection
@@ -49,6 +50,27 @@ class IntentRoutingController(BaseController):
         if brand_filter is not None:
             session_state["brand_filter"] = None if brand_filter == "all" else brand_filter
 
+        # Read-time window slice + decline filter, same reasoning as
+        # TextReplyController._mode_a_reply's own history retrieval (see
+        # that method's comment): session_state["history"] is trimmed to
+        # history_window at WRITE time (end of this method, and in
+        # SessionStore.get_or_hydrate_session's hydration path), but a
+        # session written before a SESSION_HISTORY_WINDOW reduction could
+        # still carry a stale, oversized history into this read — re-
+        # slicing here, not just trusting the stored length, closes that
+        # gap for CQR/classification the same way it's already closed for
+        # generation. _filter_decline_history (2026-09-02 self-
+        # reinforcing-decline-loop fix) is applied for the identical
+        # reason it's applied before generation: a past decline/fallback/
+        # apology turn is noise, not real conversational precedent, for
+        # rewrite_query's anaphora resolution or classify_intent's intent
+        # labeling either — letting it through here would let the same
+        # decline-loop pattern take hold one call earlier than the
+        # generation call it was originally fixed for.
+        cqr_history = _filter_decline_history(
+            session_state.get("history", [])[-self.session_store.history_window:]
+        )
+
         # Contextual Query Reformulation (CQR), 2026-09-01 — runs FIRST,
         # unconditionally, on every turn, before intent is even known.
         # Real production evidence (three separate prompt-engineering
@@ -64,7 +86,7 @@ class IntentRoutingController(BaseController):
         # longer be decided before rewriting happens.
         rewrite_guidance = self.template_parser.resolve(TemplateBucket.C, "whatsapp_query_rewrite_guidance")
         standalone_query = await self.query_router_client.rewrite_query(
-            text, session_state.get("history", []), guidance=rewrite_guidance,
+            text, cqr_history, guidance=rewrite_guidance,
         )
 
         # Real worked examples (a broad "what do you offer" question, an
@@ -79,7 +101,7 @@ class IntentRoutingController(BaseController):
         # carries) any pronoun/history-disambiguation instructions of its
         # own — see NileChat12BBaseProvider.classify_intent's own comment.
         intent = await self.query_router_client.classify_intent(
-            standalone_query, session_state.get("history", []), get_allowed_intents(), guidance=intent_guidance,
+            standalone_query, cqr_history, get_allowed_intents(), guidance=intent_guidance,
         )
         target = get_routing_target(intent)
 
