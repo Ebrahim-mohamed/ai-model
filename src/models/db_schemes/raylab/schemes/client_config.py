@@ -100,6 +100,23 @@ class ClientConfig(SQLAlchemyBase):
     whatsapp_breadth_score_threshold = Column(Float, nullable=False, server_default="0.0")
     whatsapp_breadth_score_gap = Column(Float, nullable=False, server_default="0.3")
 
+    # Dynamic Cross-Brand Availability Pipeline (2026-09-08) — powers
+    # TextReplyController._is_placeholder_shaped_chunk's Interception
+    # step: the minimum fraction of a brand-filtered chunk's own real
+    # fields that must hold genuinely DISTINCT values before it's trusted
+    # as real, informative content rather than a "not offered under this
+    # brand" redirect row. Real, evidence-grounded starting point, not a
+    # guess — the real Cairoscan Periapical X-ray "not available" chunk
+    # measured 3 distinct field values across 10 real fields (ratio 0.3,
+    # every field but the exam type/name repeating the identical "غير
+    # متاح بكايروسكان متاح بتكنو سكان" string); a real, normal
+    # informative chunk (MRV Brain veins) measured 9 distinct values
+    # across 9 fields (ratio 1.0). 0.4 cleanly separates these two real
+    # data points — still a starting point pending broader real-traffic
+    # calibration, same status every other threshold in this project
+    # carries until real traffic tunes it.
+    whatsapp_placeholder_chunk_max_distinct_ratio = Column(Float, nullable=False, server_default="0.4")
+
     # Config-driven, VALUE-matched brand promotion to top-level metadata
     # (claude.md §1.3 — never a hardcoded column/sheet name in a
     # controller). Superseded label-keyed metadata_promotion_map after
@@ -118,3 +135,33 @@ class ClientConfig(SQLAlchemyBase):
     # — the same boundary claude.md §3.1 already draws everywhere else
     # (never infer business semantics automatically).
     brand_value_aliases = Column(JSONB, nullable=False, server_default="{}")
+
+    # Analytics Dashboard pipeline (2026-09-08) — closed-set vocabulary
+    # for QueryRouterInterface.classify_topic, the LLM call that assigns
+    # every RAG-search turn a canonical topic label for the "Top
+    # Searches"/"Knowledge Gaps" reports. Same value-curated-by-admin
+    # bootstrap story as brand_value_aliases just above: starts empty, a
+    # plain list of real, admin-curated exam/service names in whatever
+    # language(s) this client's own business vocabulary actually uses.
+    # Never auto-inferred from chunk data (claude.md §1.3/§3.1) — real
+    # evidence (ChunkingController._extract_non_empty_fields) confirmed
+    # there is no single reliable "exam name" column key to scan for
+    # across sheets, the same structural reason brand promotion had to
+    # move from a label-keyed map to a value-keyed one. Every
+    # classify_topic call is constrained to this list plus the fixed
+    # "unclassified" catch-all — while this stays empty, every turn
+    # classifies as "unclassified", same honest starting state
+    # brand_value_aliases had before its own first real entry.
+    topic_taxonomy = Column(JSONB, nullable=False, server_default="[]")
+
+    # Dynamic Disambiguation / Clarification Flow (2026-09-08) — powers
+    # TextReplyController._detect_variant_ambiguity. Same "real business
+    # threshold, never a Python literal" reasoning as whatsapp_breadth_
+    # score_gap just above — this is that same idea applied to a
+    # different decision: not "is this query narrow or broad" but "do the
+    # top real candidates for this query represent genuinely competing
+    # sub-variants of the same exam/test/package family." No real-traffic
+    # calibration exists yet for this specific value — 0.3 starting point
+    # matches whatsapp_breadth_score_gap's own already-calibrated value on
+    # the same reranker score scale, pending real disambiguation traffic.
+    whatsapp_variant_ambiguity_score_gap = Column(Float, nullable=False, server_default="0.3")

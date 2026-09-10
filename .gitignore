@@ -9,6 +9,9 @@ venv/
 .env
 src/.env
 docker/env/.env.postgres
+docker/env/.env.rabbitmq
+docker/env/.env.redis
+docker/env/.env.app
 
 # Alembic — the .ini with a real DB URL is a local copy of alembic.ini.example
 src/models/db_schemes/raylab/alembic.ini

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from routes import base, sync, retrieval, whatsapp
+from routes import base, sync, retrieval, whatsapp, analytics
 from helpers.config import get_settings
 from helpers.logging_config import configure_logging
 from models.ClientConfigModel import ClientConfigModel
@@ -10,11 +10,13 @@ from models.ChunkModel import ChunkModel
 from models.ChatHistoryModel import ChatHistoryModel
 from models.DialogueStateTemplateMapModel import DialogueStateTemplateMapModel
 from models.HumanHandoffQueueModel import HumanHandoffQueueModel
+from models.IntentLogModel import IntentLogModel
 from controllers.SyncController import SyncController
 from controllers.RetrievalController import RetrievalController
 from controllers.TextReplyController import TextReplyController
 from controllers.IntentRoutingController import IntentRoutingController
 from controllers.ReplyVerificationController import ReplyVerificationController
+from controllers.AnalyticsController import AnalyticsController
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.reranker.RerankerProviderFactory import RerankerProviderFactory
@@ -135,6 +137,15 @@ async def startup_span():
         session_store=app.session_store,
     )
 
+    # Analytics Dashboard pipeline (2026-09-08) — IntentLogModel itself
+    # already existed (Phase 6), but was only ever instantiated inside the
+    # Celery worker's own composition root (celery_app.py's
+    # get_setup_utils), never attached to this FastAPI app — the write
+    # path (tasks/log_intent.py) still owns that instance; this is a
+    # separate, read-only instance for the new dashboard endpoint.
+    app.intent_log_model = await IntentLogModel.create_instance(app.db_client)
+    app.analytics_controller = AnalyticsController(intent_log_model=app.intent_log_model)
+
 
 async def shutdown_span():
     await app.session_store.close()
@@ -148,3 +159,4 @@ app.include_router(base.base_router)
 app.include_router(sync.sync_router)
 app.include_router(retrieval.retrieval_router)
 app.include_router(whatsapp.whatsapp_router)
+app.include_router(analytics.analytics_router)

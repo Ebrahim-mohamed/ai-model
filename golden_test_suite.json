@@ -428,5 +428,40 @@
     "patient_query": "طيب نسبة الكاش باك على الأشعة كام؟",
     "expected_fact": "[Document: قيمة كاش باك كارت لاكي] النوع: الاشعه. النسبه: 0.25",
     "expected_behavior": "Should state the cashback rate on radiology exams is 25% (0.25)."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل رنين طيفي على الفم والوجه MRS، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحة بتكنو سكان وكايروسكان",
+    "expected_behavior": "Knowledge Gaps / not_found validation (2026-09-08, Analytics Dashboard pipeline). MRS for face & Oral cavity's real catalog row is placeholder-shaped (the identical 'غير متاحة بتكنو سكان وكايروسكان' string repeated across every field) under BOTH brands, not just the filtered one — confirmed against the live corpus, not assumed. Should trigger the Dynamic Cross-Brand Availability Pipeline's Interception -> Forced Fallback -> UNAVAILABLE_EVERYWHERE path (every unfiltered candidate also placeholder-shaped, no real alternative found) and return the deterministic 'مش متاحة في أي فرع من فروعنا' fallback verbatim — must NOT fabricate availability or a false cross-brand redirect, since neither brand actually offers it. Expect TextReplyController._mode_a_reply to return outcome_status='not_found' for this turn (verify via intent_log, not via this script's own debug_json-based grading — see this suite's own note on that)."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل فيبروسكان لقياس نسبة تليف الكبد، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحة بتكنو وكايرو سكان",
+    "expected_behavior": "Knowledge Gaps / not_found validation. Fibroscan (liver fibrosis/fat quantification) is genuinely absent at both brands per the real catalog row — same UNAVAILABLE_EVERYWHERE expectation as the MRS case above. Must decline honestly, never hallucinate a branch or a cross-brand redirect for a service neither brand offers."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل Single Fiber EMG، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحة بتكنو وكايرو سكان",
+    "expected_behavior": "Knowledge Gaps / not_found validation. Single Fiber EMG (a specialized nerve-conduction study) is genuinely absent at both brands per the real catalog row — same UNAVAILABLE_EVERYWHERE expectation. A good diversity case: same EMG sheet as an existing positive case (needle EMG add-on, case 10 above) but this specific sub-exam is the negative case."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل مسح ذري للجهاز الليمفاوي Lymphoscintigraphy، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحة بتكنو سكان وكايروسكان",
+    "expected_behavior": "Knowledge Gaps / not_found validation. Lymphoscintigraphy (a nuclear-medicine lymphatic-system scan) is genuinely absent at both brands per the real catalog row — same UNAVAILABLE_EVERYWHERE expectation. Nuclear-medicine-adjacent to the existing MIBG/Panoramic negative-control rows found in the same real sheet, not an invented category."
+  },
+  {
+    "sheet_name": "Examinations",
+    "patient_query": "عايز اعمل سونار على الغدة الدرقية بتقنية المرونة، متاح عندكم في تكنوسكان؟",
+    "brand_filter": "technoscan",
+    "expected_fact": "مـسـمـى الـفـحـص عـلـى الـســيـسـتـم: غير متاحة بتكنو وكايرو سكان",
+    "expected_behavior": "Knowledge Gaps / not_found validation. Thyroid Elastography ultrasound (a specific elasticity-measurement technique, distinct from a plain thyroid ultrasound) is genuinely absent at both brands per the real catalog row — same UNAVAILABLE_EVERYWHERE expectation."
   }
 ]

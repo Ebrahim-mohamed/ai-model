@@ -162,6 +162,7 @@ class ReplyVerificationController(BaseController):
         phrasing: str,
         json_block,
         context_block: str | None = None,
+        required_phrase: str | None = None,
     ) -> str:
         """Returns the reply text that's actually safe to show the
         patient: `phrasing` unchanged if it passes (or if there's no
@@ -193,7 +194,33 @@ class ReplyVerificationController(BaseController):
         actually saw. `context_block` is None on the zero-chunk
         out-of-domain decline path — harmless, since that path also never
         produces a json_block, and this method already returns early
-        on `json_block is None` before context_block is ever touched."""
+        on `json_block is None` before context_block is ever touched.
+
+        `required_phrase` (2026-09-08, Dynamic Cross-Brand Availability
+        Pipeline, Hallucination Lock Layer 2 — optional/backward-
+        compatible, defaults to None, every pre-existing call site
+        unaffected) — TextReplyController passes the real alternative
+        brand's own Arabic label here ONLY on a cross-brand-referral turn
+        (availability_status == _AVAILABILITY_UNAVAILABLE_HERE). Checked
+        BEFORE the json_block-based numeric check, and independent of it
+        (still runs even when json_block is None) — real evidence showed
+        the model can ignore an explicit cross-brand instruction and
+        answer as a normal same-brand confirmation, a failure the
+        numeric-grounding check alone would never catch (a reply that
+        omits the brand mention entirely doesn't necessarily cite any
+        unverified number). This is a structural presence check — does
+        the phrasing contain the one real, already-known fact
+        (which brand to refer the patient to) it was explicitly given —
+        not full semantic verification of the whole reply; a real,
+        disclosed limitation, same "not a proof of correctness, a floor
+        against the one specific failure already observed" scope every
+        other check in this class already carries."""
+        if required_phrase and required_phrase not in phrasing:
+            return await self._reject(
+                client_id, session_id, patient_message, phrasing,
+                reason="missing_required_cross_brand_mention", required_phrase=required_phrase,
+            )
+
         if json_block is None:
             return phrasing
 
@@ -205,16 +232,29 @@ class ReplyVerificationController(BaseController):
         if result.accepted:
             return phrasing
 
+        return await self._reject(
+            client_id, session_id, patient_message, phrasing,
+            reason=result.reason, **result.detail,
+        )
+
+    async def _reject(
+        self, client_id: str, session_id, patient_message: str, phrasing: str, reason: str, **detail,
+    ) -> str:
+        """Shared by both rejection paths (required_phrase and numeric
+        grounding) — same logging/enqueue/fallback shape either way, only
+        the reason/detail differ. Factored out 2026-09-08 when the
+        required_phrase check became this method's second real rejection
+        path, so the two don't duplicate this exact sequence."""
         self.logger.warning(
             f"[reply_verification] REJECTED client_id={client_id} session_id={session_id} "
-            f"reason={result.reason!r} detail={result.detail} phrasing={phrasing!r}"
+            f"reason={reason!r} detail={detail} phrasing={phrasing!r}"
         )
         await self.human_handoff_queue_model.enqueue(
             client_id=client_id,
             session_id=session_id,
             patient_message=patient_message,
             draft_reply=phrasing,
-            rejection_reason=result.reason,
-            rejection_detail=result.detail,
+            rejection_reason=reason,
+            rejection_detail=detail,
         )
         return REPLY_VERIFICATION_FAILED_FALLBACK

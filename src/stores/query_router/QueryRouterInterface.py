@@ -168,3 +168,46 @@ class QueryRouterInterface(ABC):
         a literal exam name straight out of a concrete example into a
         real conversation that never mentioned it."""
         pass
+
+    @abstractmethod
+    async def classify_topic(
+        self,
+        text: str,
+        allowed_topics: list[str],
+        guidance: str | None = None,
+    ) -> str:
+        """Analytics Dashboard pipeline (2026-09-08) — returns the single
+        canonical topic label this turn's query is about, for Phase 6's
+        Intent Log (`extracted_topic`). Deliberately a SEPARATE method
+        from classify_intent, not a reuse of it despite the identical
+        closed-set-classification shape: classify_intent's own out-of-set
+        fallback is hardcoded to `_FALLBACK_INTENT` ("inquiry" — a real
+        member of the *intent* set with its own routing meaning), which
+        would be a nonsensical, actively misleading fallback for a topic
+        label. This method's own fallback is a fixed "unclassified" —
+        never raises, under any failure (timeout, connection failure,
+        malformed/unparseable JSON, an out-of-set value), same never-
+        raise contract as every other method on this interface.
+
+        `text` — a standalone, already-resolved query (the caller passes
+        rewrite_query()'s own output, exactly like classify_intent's own
+        `text` — see that method's docstring for why: this call needs no
+        pronoun/history resolution of its own).
+
+        `allowed_topics` — the closed set to classify into, sourced by the
+        caller from `client_config.topic_taxonomy` (never hardcoded inside
+        a provider — same claude.md §1.3 discipline `allowed_intents`
+        already follows on classify_intent). Real, disclosed limitation:
+        while a client's own topic_taxonomy is empty (its own real,
+        honest starting state — see that column's own comment), every
+        call here degrades to "unclassified" by construction, since that's
+        the only member of the effective allowed set.
+
+        `guidance` — same optional, Bucket-C-sourced contract as every
+        other method on this interface.
+
+        No `history` parameter: unlike classify_intent (which still takes
+        `history` as light supporting context — see that method's own
+        docstring), topic classification has no comparable use for prior
+        turns; `text` being already-standalone is sufficient on its own."""
+        pass

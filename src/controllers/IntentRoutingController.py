@@ -1,3 +1,5 @@
+import time
+
 from .BaseController import BaseController
 from .TextReplyController import _filter_decline_history
 from utils.intent_routing_map import get_routing_target, get_allowed_intents, RoutingTarget
@@ -36,6 +38,15 @@ class IntentRoutingController(BaseController):
     async def route_turn(
         self, client_id: str, session_id, modality: str, text: str, brand_filter: str | None = None,
     ) -> dict:
+        # Analytics Dashboard pipeline (2026-09-08) — end-to-end wall-clock
+        # for the WHOLE turn (session hydration through the reply this
+        # method returns), not just the TEXT_PIPELINE reply() call: this
+        # is deliberately a universal per-turn metric, unlike outcome_
+        # status/extracted_topic below which only mean something for a
+        # real Mode A search attempt — see IntentLog.latency_ms's own
+        # column comment.
+        turn_started_at = time.perf_counter()
+
         session_state = await self.session_store.get_or_hydrate_session(
             client_id, session_id, self.chat_history_model,
         )
@@ -67,6 +78,22 @@ class IntentRoutingController(BaseController):
         # labeling either — letting it through here would let the same
         # decline-loop pattern take hold one call earlier than the
         # generation call it was originally fixed for.
+        #
+        # Deliberately uses _filter_decline_history's DEFAULT predicate
+        # (_is_decline_or_fallback_reply alone, NOT the combined
+        # _is_decline_fallback_or_clarification_reply TextReplyController's
+        # own generation call sites pass) — 2026-09-08, CQR-context-loss
+        # fix: a clarification-list turn (_build_clarification_reply) must
+        # stay visible here. rewrite_query genuinely needs its real content
+        # to resolve a terse follow-up ("فك واحد") into a retrieval-quality
+        # standalone query ("CBCT Single Arch") — real, confirmed incident:
+        # filtering it out of cqr_history too (an earlier version of this
+        # fix folded the clarification check into the shared predicate both
+        # call sites use) starved CQR of that context entirely, collapsing
+        # retrieval to noise-level (0.0033) and grounding a confident
+        # answer on the wrong exam. Only generation must avoid imitating
+        # the clarification turn's own non-JSON shape — see
+        # _is_clarification_reply's own docstring in TextReplyController.py.
         cqr_history = _filter_decline_history(
             session_state.get("history", [])[-self.session_store.history_window:]
         )
@@ -107,6 +134,9 @@ class IntentRoutingController(BaseController):
 
         mode = None
         debug_json = None
+        outcome_status = None
+        retrieval_score = None
+        topic_override = None
         if target == RoutingTarget.TEXT_PIPELINE.value:
             # standalone_query is used ONLY for retrieval inside
             # TextReplyController; `text` itself is untouched and is what
@@ -114,14 +144,17 @@ class IntentRoutingController(BaseController):
             # human_handoff_queue, so a short real reply like "اه" still
             # gets a naturally-phrased response, not one that talks as if
             # the patient had typed the rewritten query.
-            reply_text, mode, debug_json = await self.text_reply_controller.reply(
-                client_id, session_id, text, standalone_query, session_state,
-            )
+            reply_text, mode, debug_json, outcome_status, retrieval_score, topic_override = \
+                await self.text_reply_controller.reply(
+                    client_id, session_id, text, standalone_query, session_state,
+                )
             routing_outcome = RoutingOutcome.AI_HANDLED
         else:
             # Steps 2/5 (complaints, booking) aren't built yet — routed
             # here honestly rather than silently mishandled by Step 1's
-            # text pipeline, or crashing.
+            # text pipeline, or crashing. outcome_status/retrieval_score/
+            # topic_override stay None — this never reached a Mode A
+            # search attempt.
             reply_text = PENDING_PHASE_REPLY
             routing_outcome = RoutingOutcome.NOT_IMPLEMENTED
 
@@ -135,9 +168,26 @@ class IntentRoutingController(BaseController):
         ])[-window:]
         await self.session_store.save_session(client_id, session_id, session_state)
 
+        latency_ms = (time.perf_counter() - turn_started_at) * 1000
+
         # Fire-and-forget analytics write — enqueued, never awaited
         # inline, so a logging failure or delay can never affect the
         # patient-facing reply (claude.md §6, Implementation Plan Step 1).
+        # standalone_query (2026-09-08, Analytics Dashboard pipeline) is
+        # passed through so the task can run topic classification against
+        # the already anaphora-resolved query — never the raw `text` (see
+        # QueryRouterInterface.classify_topic's own docstring for why a
+        # standalone query matters here the same way it already does for
+        # classify_intent/rewrite_query). Classification itself happens
+        # inside the task, off this turn's own critical path, exactly like
+        # the intent_log write itself already does.
+        # topic_override (2026-09-08, Dynamic Disambiguation/Clarification
+        # Flow) — set only on a clarification-requested turn, where
+        # TextReplyController already deterministically knows the real
+        # parent category (e.g. "CBCT (3D)") from what was actually
+        # retrieved. Passed through so the task can use it directly and
+        # skip its own classify_topic call for that turn entirely — see
+        # tasks/log_intent.py's own docstring.
         from tasks.log_intent import log_intent_turn
         log_intent_turn.delay(
             client_id=client_id,
@@ -145,6 +195,11 @@ class IntentRoutingController(BaseController):
             modality=modality,
             intent=intent,
             routing_outcome=routing_outcome,
+            outcome_status=outcome_status,
+            resolved_query=standalone_query,
+            retrieval_score=retrieval_score,
+            latency_ms=latency_ms,
+            topic_override=topic_override,
         )
 
         return {"reply": reply_text, "intent": intent, "mode": mode, "debug_json": debug_json}

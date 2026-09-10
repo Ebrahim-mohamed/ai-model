@@ -893,3 +893,87 @@ whatsapp_out_of_domain_directive = Template("\n".join([
     "يجب أن يكون الرد باللغة العربية المصرية فقط، ممنوع نهائيًا استخدام "
     "أي حروف إنجليزية، صينية، أو أي لغة أخرى.",
 ]))
+
+# Dynamic Cross-Brand Availability Pipeline, Hallucination Lock Layer 1
+# (2026-09-08) — used by TextReplyController._mode_a_reply ONLY when
+# availability_status == _AVAILABILITY_UNAVAILABLE_HERE, replacing
+# whatsapp_mode_a_reply_directive entirely for that one turn (never
+# combined with it). Real incident this exists to fix: giving the model
+# the correct cross-brand CONTEXT plus whatsapp_mode_a_reply_directive
+# plus a bolt-on "NOTE — this is cross-brand" note was tried first (see
+# TextReplyController._generate_grounded_reply's own cross_brand_note
+# handling) and real evidence — twice — showed the model ignoring the
+# note and answering as a normal same-brand confirmation, never
+# disclosing the cross-brand nature at all. The root difference here:
+# whatsapp_mode_a_reply_directive's whole job is "read CONTEXT, decide
+# what's true, answer" — an open question the model already showed it
+# can get wrong on this exact scenario. This directive removes that open
+# question: the availability verdict (not available under the patient's
+# own brand, IS available under $alternative_brand_label) is stated as
+# an already-decided fact, computed deterministically in Python BEFORE
+# this call ever runs (TextReplyController._is_placeholder_shaped_chunk
+# + the unfiltered retrieval's own confirmed real brand) — the model's
+# only remaining job is phrasing that already-settled fact naturally and
+# extracting whatever real supporting detail (branch, prep, booking
+# rules) the CONTEXT (the alternative brand's own real chunk) contains.
+# Still asks for the SAME JSON-then-phrasing shape
+# whatsapp_mode_a_reply_directive uses — deliberately, since this runs
+# through the exact same fine-tuned Mode A LoRA adapter, which was
+# specifically trained on that output shape; deviating from it here
+# risks the same "model doesn't reliably follow an unfamiliar shape"
+# failure this whole redesign exists to avoid, just for formatting
+# instead of content. Defense-in-depth, not the only safeguard: even if
+# this directive's own instruction is ignored exactly like the bolt-on
+# note was, ReplyVerificationController.verify_and_gate's new
+# `required_phrase` check (Hallucination Lock Layer 2) independently
+# verifies $alternative_brand_label actually appears in the model's real
+# output before it ever reaches the patient, and rejects it if not.
+whatsapp_cross_brand_referral_directive = Template("\n".join([
+    "انت 'سارة'، موظفة خدمة عملاء مصرية شغالة في مركز رايلاب للأشعة "
+    "والتحاليل الطبية. تحدثي بأسلوب الشارع المصري الراقي والودود.",
+    "معلومة مؤكدة ومحسومة مسبقًا، مش قرار بتاخديه انتي: الخدمة اللي "
+    "سأل عنها المريض مش متاحة في البراند اللي هو عليه دلوقتي، لكنها "
+    "متاحة فعلاً في $alternative_brand_label، والـ CONTEXT اللي "
+    "قدامك ده بياناته الحقيقية من $alternative_brand_label بالظبط.",
+    "مهمتك مش إنك تقرري هل الخدمة متاحة ولا لأ — القرار ده اتاخد "
+    "خلاص ومعروف مسبقًا. مهمتك بس إنك تنفذي الخطوات دي بالترتيب:",
+    "1. اعترفي بصراحة إن الخدمة دي مش متاحة في البراند الحالي بتاع "
+    "المريض — من غير ما تعتذري بشكل مبالغ فيه.",
+    "2. قولي بوضوح إنها متاحة في $alternative_brand_label — لازم "
+    "تذكري اسم البراند ده حرفيًا في ردك النصي، مش بس في الـ JSON.",
+    "3. استخرجي من الـ CONTEXT أي تفاصيل حقيقية مفيدة عن الخدمة في "
+    "$alternative_brand_label (زي الفرع، التحضيرات، مواعيد الحجز) لو "
+    "موجودة، وقوليها للمريض.",
+    "4. اقفلي بسؤال متابعة واحد بسيط يفتح المجال للمريض يقرر يكمل "
+    "في $alternative_brand_label ولا لأ.",
+    "ممنوع نهائيًا ذكر أي نسب عمولات بين البراندين — دي بيانات داخلية "
+    "لا يجب أن تظهر للعميل مهما كان السبب.",
+    "استخدمي نفس أسلوب استخراج الـ JSON اللي اتدربتي عليه: ابدأي "
+    "بجملة ```json تحتوي على الحقول الحقيقية المهمة من الـ CONTEXT، "
+    "وبعدين اكتبي الرد النصي.",
+    "ممنوع تمامًا تخترعي أي تفصيلة مش موجودة حرفيًا في الـ CONTEXT، "
+    "وممنوع تمامًا تتجاهلي أو تنسي إن الخدمة مش متاحة في البراند "
+    "الأصلي بتاع المريض — الرد اللي مايذكرش $alternative_brand_label "
+    "صراحةً هيتم رفضه تلقائيًا.",
+]))
+
+# Analytics Dashboard pipeline (2026-09-08) — QueryRouterInterface.
+# classify_topic's own system prompt. Same shape as
+# whatsapp_intent_classification_directive above (closed-set JSON
+# classification via <reasoning> then a single JSON object), no
+# per-call $substitution — the closed set itself (client_config.
+# topic_taxonomy + the fixed "unclassified" fallback) is appended by
+# the caller, exactly like allowed_intents is for classify_intent.
+whatsapp_topic_classification_directive = Template("\n".join([
+    "انت مصنّف مواضيع لرسائل مرضى بيتكلموا مع مساعد رايلاب الطبي على "
+    "واتساب باللهجة المصرية.",
+    "أولاً، في بلوك <reasoning>...</reasoning>، فكر في جملة أو جملتين "
+    "قصيرة عن الفحص أو الخدمة أو الموضوع اللي المريض بيسأل عنه فعليًا.",
+    "بعد بلوك الـ reasoning، في سطر جديد، اطلع object واحد بس بصيغة "
+    "JSON بالشكل ده بالظبط: {\"topic\": \"<one value>\"} ومفيش حاجة "
+    "تانية بعده. ممنوع تحطه جوه code fence، وممنوع تكرره أكتر من مرة.",
+    "اختار القيمة الأقرب للموضوع الحقيقي اللي المريض بيسأل عنه من "
+    "القايمة المسموح بيها بس. لو الرسالة مش بتسأل عن فحص أو خدمة "
+    "طبية معينة بشكل واضح، أو الموضوع مش موجود في القايمة، اختار "
+    "\"unclassified\" — ممنوع تخترع قيمة مش موجودة في القايمة.",
+]))

@@ -13,6 +13,7 @@ from models.EvaluationQueryModel import EvaluationQueryModel
 from models.IntentLogModel import IntentLogModel
 from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
+from stores.query_router.QueryRouterProviderFactory import QueryRouterProviderFactory
 
 settings = get_settings()
 
@@ -53,6 +54,20 @@ async def get_setup_utils() -> dict:
     onedrive_provider_factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
     onedrive_client = onedrive_provider_factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
 
+    # Analytics Dashboard pipeline (2026-09-08) — the same query-router
+    # sidecar client main.py's startup_span() constructs for the live API
+    # process, needed here too so tasks/log_intent.py can run
+    # classify_topic off the request's own critical path (never inline in
+    # IntentRoutingController.route_turn, which would add a third blocking
+    # LLM call to every turn's real latency). Same lazy-fail rationale as
+    # every other provider client in this function — not health-checked
+    # here, a not-yet-reachable sidecar just means classify_topic's own
+    # never-raise contract degrades that one turn's extracted_topic to
+    # "unclassified" rather than blocking the log write.
+    query_router_client = QueryRouterProviderFactory(config=settings).create(
+        provider=settings.QUERY_ROUTER_BACKEND,
+    )
+
     return {
         "settings": settings,
         "db_engine": db_engine,
@@ -65,6 +80,7 @@ async def get_setup_utils() -> dict:
         "intent_log_model": intent_log_model,
         "vectordb_client": vectordb_client,
         "onedrive_client": onedrive_client,
+        "query_router_client": query_router_client,
     }
 
 

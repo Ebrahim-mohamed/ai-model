@@ -79,6 +79,13 @@ _HISTORY_TURN_LIMIT = 6
 # provider, same as it always has.
 _FALLBACK_INTENT = "inquiry"
 
+# Analytics Dashboard pipeline (2026-09-08) — classify_topic's own
+# failure/out-of-set fallback. Deliberately NOT _FALLBACK_INTENT ("inquiry"
+# has no meaning as a topic label) — see QueryRouterInterface.classify_
+# topic's own docstring for the full reasoning behind this being a
+# separate method rather than a reuse of classify_intent.
+_FALLBACK_TOPIC = "unclassified"
+
 
 class _RouterUnavailableError(Exception):
     """Internal-only — never crosses this module's boundary. Translates a
@@ -316,3 +323,48 @@ class NileChat12BBaseProvider(QueryRouterInterface):
             return text
 
         return resolved_query
+
+    async def classify_topic(
+        self,
+        text: str,
+        allowed_topics: list[str],
+        guidance: str | None = None,
+    ) -> str:
+        """See QueryRouterInterface.classify_topic's own docstring for the
+        full contract. Structurally the same shape as classify_intent
+        above (closed-set JSON classification, last-JSON-object parsing,
+        never raises) with its own dedicated fallback and no `history`."""
+        effective_allowed = allowed_topics + [_FALLBACK_TOPIC] if _FALLBACK_TOPIC not in allowed_topics else allowed_topics
+
+        system_prompt_parts = [
+            self._template_parser.resolve(TemplateBucket.C, "whatsapp_topic_classification_directive"),
+            f"<one value> MUST be exactly one of: {json.dumps(effective_allowed, ensure_ascii=False)}",
+        ]
+        if guidance:
+            system_prompt_parts.append(guidance)
+        system_prompt = "\n".join(system_prompt_parts)
+
+        user_content = f"## Message to classify:\n{text}"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            raw_response = await asyncio.to_thread(self._post_chat_completion, messages, 0.0, 150)
+        except _RouterUnavailableError as e:
+            self.logger.warning(f"classify_topic: request failed ({e}) — falling back to {_FALLBACK_TOPIC!r}")
+            return _FALLBACK_TOPIC
+
+        parsed = _extract_last_json_object(raw_response)
+        topic = parsed.get("topic") if parsed else None
+
+        if topic not in effective_allowed:
+            self.logger.warning(
+                f"classify_topic: model returned an out-of-set or unparseable topic in "
+                f"{raw_response!r} — falling back to {_FALLBACK_TOPIC!r}"
+            )
+            topic = _FALLBACK_TOPIC
+
+        return topic

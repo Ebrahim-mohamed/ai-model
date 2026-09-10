@@ -1,121 +1,99 @@
-# Raylab
+# Raylab — Setup & Execution Guide
 
-Multi-tenant RAG backend (Section 2: OneDrive Integration). See `claude.md` for the full
-architectural constitution and `D:\project\Implementation Plan — Section 2 The Multi-Tenant.md`
-for the build order this project follows step by step.
+## 1. Windows Environment & Prerequisites Setup
 
-## Status
+1. **Install Git**
+   Download and install [Git for Windows](https://git-scm.com/download/win), then verify in `cmd`:
+   ```cmd
+   git --version
+   ```
 
-**Step 9 of 9 complete: Hybrid Retrieval Endpoint.** All nine Implementation Plan steps are now
-built. Real end-to-end verification of the retrieval endpoint's dense-vector leg is still pending
-a full production embedding backfill finishing on this dev machine's hardware (see the Step 9
-section below) — BM25/keyword retrieval, RRF fusion, re-ranking, metadata-filter validation, and
-`client_id` isolation are all already verified against real data.
+2. **Clone the Repository**
+   ```cmd
+   git clone https://github.com/Menna-Harmas/Raylab.git Raylab_Project
+   cd Raylab_Project
+   ```
 
-Implemented so far:
-- **Step 1** — `knowledge_chunks` (pgvector store, `client_id NOT NULL`, `embedding VECTOR(1024)`), `client_config` (tenant registry), `ChunkModel`, `ClientConfigModel`, `BucketEnum`.
-- **Step 2** — `helpers/config.py` extended (`EMBEDDING_BACKEND_LITERAL`); `schema_registry` table + `SchemaRegistryModel` (auto-discovery/auto-registration, upsert-on-discovery, zero manual DB entry); stateless `utils/dynamic_schema_loader.py`.
-- **Step 3** — `stores/onedrive/*` (Interface/Enums/Factory/`MSALGraphProvider`), `TokenCacheModel` (Fernet-encrypted, DB-backed token cache, `client_id`-scoped, never plaintext).
-- **Step 4** — `main.py` + `celery_app.py` (the two composition roots), `routes/sync.py` (`POST /api/sync`, `GET /api/sync/{task_id}/status`), `controllers/SyncController.py`, `tasks/onedrive_sync.py`. Redis/RabbitMQ added as Docker services; **no celery-beat service, no `beat_schedule` entry** — sync stays human-initiated only.
-- **Step 5** — `controllers/DocumentParsingController.py` (auto-discovers/auto-registers sheets, routes rows by `BucketEnum`, stamps every row with its `sheet_name`); `tasks/document_parsing.py` (chained after `fetch_and_dispatch`); `staging_rows` table + `StagingRowModel` for **Bucket A only**. Bucket B/C are never written to the database — `utils/template_file_writer.py` renders them into generated `stores/llm/templates/clients/<client_id>/{prompt_templates,system_directives}.py` modules instead (see the Step 5 section below).
-- **Step 6** — `controllers/ChunkingController.py` (Bucket A only): a two-step, per-row process — concatenate every non-empty field into `"label: value"` in schema order, then prepend `[Document: {file_name}] ` to the finished string. `tasks/chunk_generation.py` (`generate_chunks`, chained after `parse_and_stage`) writes the result into `knowledge_chunks` via `ChunkModel`, delete-and-reinsert scoped to `(client_id, source_file)`. See the Step 6 section below, including why an earlier statistical boilerplate-exclusion mechanism was built and then fully removed.
-- **Step 7** — `stores/vectordb/*` (`VectorDBInterface`/`VectorDBEnums`/`VectorDBProviderFactory`/`providers/PGVectorProvider.py`): the Ports & Adapters abstraction over Postgres/pgvector, `client_id` required on every method. `ChunkModel.insert_many_chunks`/`search_by_vector` now delegate to this adapter instead of running their own SQL. No schema change — no new migration for this step.
-- **Step 8** — `stores/llm/*` (`LLMInterface`/`LLMEnums`/`LLMProviderFactory`/`providers/{BGEM3Provider,SwanLargeProvider}.py`); `controllers/EmbeddingShootoutController.py` (orchestrates the benchmark, no embedding math of its own); `models/EvaluationQueryModel.py` + `evaluation_queries`/`shootout_results` tables; `tasks/embedding_shootout.py`. **BGE-M3 is fully real and working**; **Swan-Large is deferred** — its HuggingFace repo is gated (401 on both the model page and API) and it's built on a 7B-parameter backbone this dev machine's hardware can't run. See the Step 8 section below for the full research and why the architecture is complete regardless.
-- **Production embedding generation** (bridges Step 8 into actual use) — `controllers/EmbeddingGenerationController.py`, `tasks/embedding_generation.py` (`generate_embeddings`), chained automatically after every `generate_chunks` run, plus reusable standalone as a backfill for chunks synced before an embedding backend was promoted. `stores/vectordb`'s `VectorDBInterface`/`PGVectorProvider` gained `update_embeddings`; `ChunkModel` gained `update_embeddings` (delegating) + `get_chunks_without_embedding`. Writes commit incrementally per batch, never one all-or-nothing write. See the note in the Step 9 section below.
-- **Step 9** — `routes/retrieval.py` (`POST /api/retrieve`), `routes/schemes/retrieval.py`, `controllers/RetrievalController.py` (validates `metadata_filters` against `client_config.allowed_metadata_keys`, embeds the query, calls hybrid search, then re-ranks), `stores/reranker/*` (`RerankerInterface`/`RerankerEnums`/`RerankerProviderFactory`/`providers/CrossEncoderProvider.py`). `PGVectorProvider` gained `search_by_bm25` and `hybrid_search` (dense + sparse + Reciprocal Rank Fusion). `client_config` gained `retrieval_top_k`/`rrf_k` — never hardcoded (claude.md §1.3). See the Step 9 section below.
-- Nine chained Alembic migrations: `7ec06e4ca8ba` (Step 1) → `48d3c854b890` (Step 2) → `5ef02a92a86f` (Step 3) → `5ab64e68194b` (`client_config.admin_api_key`) → `0e243cbc913b` (`staging_rows`) → `a0db1131db2f` (`client_config.onedrive_drive_id`) → `ff0b5276e5cb` (Step 6's drop of `client_config.boilerplate_threshold`) → `83b89604b9c4` (Step 8's `evaluation_queries` + `shootout_results`) → `32f61443e199` (Step 9's `client_config.retrieval_top_k`/`rrf_k`). Step 7 and the embedding-generation addition added no migration.
+3. **Install Miniconda (Windows)**
+   - Download from: `https://www.anaconda.com/docs/getting-started/miniconda/install`
+   - During setup, **check the box** for "Add Miniconda to my PATH environment variable".
+   - Verify in `cmd`:
+     ```cmd
+     conda --version
+     ```
 
-Not built (out of Section 2's scope entirely): `TemplateParser`'s actual runtime consumer — the
-WhatsApp/Voice workflows (Sections 3/4) that would call it — since those are explicitly out of
-scope (claude.md §2.1). Everything in the nine Implementation Plan steps for Section 2 exists.
+4. **Install Docker Desktop**
+   - Download and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/).
+   - In **Settings → General**, ensure **"Use the WSL 2 based engine"** is checked.
+   - This is required infrastructure for Section 3 — Docker Desktop exposes the `docker`/`docker compose` CLI inside WSL2 automatically once Section 2 is complete.
 
-**Note on `client_id` in this environment:** the step-by-step walkthroughs below (Steps 1–5)
-were written and tested using `client_id='cairoscan'` as the illustrative example. The real,
-currently-onboarded client in this actual running environment is `client_id='raylab'`
-(`admin_api_key='raylab-admin-test-key'`) — see **Daily Startup** below. When following the
-historical `psql`/script examples further down, substitute `raylab` for `cairoscan` unless you've
-onboarded `cairoscan` for real too.
+5. **Create the Windows Conda Environment** *(optional — for VS Code IntelliSense/editing only; the project's actual runtime environment is the WSL one built in Section 2)*
+   - Open the project folder in VS Code and launch the integrated terminal.
+   - Run:
+     ```cmd
+     conda create -n raylab python=3.11 -y
+     conda activate raylab
+     ```
 
-## Prerequisites
+---
 
-- WSL (Ubuntu) terminal
-- Docker Desktop with the WSL2 backend enabled
-- Python 3.10+ inside WSL
-- DBeaver (DB inspection) and Postman (API testing, once endpoints exist) on the Windows host
+## 2. WSL & Ubuntu Setup
 
-## Server Setup & Deployment Guide
+This is the project's **real execution environment** — every command in Section 3 runs from here.
 
-Complete, from-scratch instructions to stand up this project on a brand-new machine with
-nothing installed — no Docker, no Conda, no cloned repo. Every command below is real and was
-run in this exact sequence during this project's own environment rebuild. Commands are
-Ubuntu/Debian-targeted (`apt`-based) and run from a bash shell — on Windows that shell is WSL2
-(per the Prerequisites above); on a bare Linux server it's the server's own shell, and every
-command is identical either way. This section supersedes **Local Setup & Development** below
-for a genuinely fresh machine — that section is kept as historical documentation of how Step 1
-was originally built, not as the current setup path.
+1. **Install WSL & Ubuntu**
+   Open **PowerShell as Administrator** and run:
+   ```powershell
+   wsl --install
+   wsl --set-default-version 2
+   wsl --version
+   wsl --install Ubuntu
+   ```
 
-### 0. Clone the repository
+2. **Initial Ubuntu Configuration**
+   - Launch **Ubuntu** from the Windows Start menu.
+   - Complete setup by creating your `username` and `password`.
+   - Update packages:
+     ```bash
+     sudo apt update
+     ```
 
-```bash
-git clone <this-repo-url> Raylab_Project
-cd Raylab_Project
-```
+3. **Install Miniconda inside WSL (Ubuntu)**
+   Open the WSL terminal in VS Code and run sequentially:
+   ```bash
+   cd ~
+   curl -fsSL -o miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+   chmod +x miniconda.sh
+   ./miniconda.sh -b -p $HOME/miniconda3
+   ```
+   Initialize and reload the shell:
+   ```bash
+   $HOME/miniconda3/bin/conda init bash
+   source ~/.bashrc
+   ```
+   Anaconda's default channels require a one-time Terms of Service acceptance, or the very first `conda create` fails with `CondaToSNonInteractiveError`:
+   ```bash
+   conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+   conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+   ```
 
-### 1. Install system prerequisites
+4. **Create & Activate the WSL Conda Environment**
+   ```bash
+   conda create -n raylab python=3.11 -y
+   conda activate raylab
+   ```
+   Python 3.11 is required — `pgvector` and other pinned dependencies need Python ≥3.9, and 3.11 is the version this project is built and verified against.
 
-**Docker Engine + Compose plugin** (official Docker apt repository — this installs the modern
-`docker compose` v2 plugin, not the deprecated standalone `docker-compose`):
+---
 
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+## 3. Project Execution Pipeline
 
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
+Run every command below from the **WSL Ubuntu terminal**, with the `raylab` conda environment active, unless stated otherwise.
 
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# run docker without sudo (log out/in, or `newgrp docker`, for this to take effect)
-sudo usermod -aG docker $USER
-newgrp docker
-
-docker --version
-docker compose version
-```
-
-> On Windows, install **Docker Desktop** with the WSL2 backend enabled instead — it exposes the
-> same `docker`/`docker compose` CLI inside WSL2 automatically, and every command below is
-> identical either way.
-
-**Miniconda:**
+### 3.1 Infrastructure containers (Postgres/pgvector, Redis, RabbitMQ)
 
 ```bash
-cd ~
-curl -fsSL -o miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash miniconda.sh -b -p $HOME/miniconda3
-$HOME/miniconda3/bin/conda init bash
-source ~/.bashrc
-```
-
-Anaconda's default channels now require an explicit one-time Terms of Service acceptance before
-`conda create` will run non-interactively — skip this and the very first `conda create` fails
-with `CondaToSNonInteractiveError`:
-
-```bash
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-```
-
-### 2. Spin up the infrastructure containers (Postgres/pgvector, Redis, RabbitMQ)
-
-```bash
-cd docker
+cd /mnt/d/Raylab_Project/docker   # adjust the drive/path to wherever you cloned the repo
 cp env/.env.example.postgres env/.env.postgres
 cp env/.env.example.redis env/.env.redis
 cp env/.env.example.rabbitmq env/.env.rabbitmq
@@ -126,25 +104,9 @@ docker compose ps        # wait until all three show "healthy" before continuing
 cd ..
 ```
 
-This starts `raylab-pgvector` (host port `5433` → container `5432`, database `raylab`),
-`raylab-redis` (host port `6380` → container `6379`), and `raylab-rabbitmq` (host port `5673` →
-container `5672`, management UI on `15673`). `docker-compose.yml` also defines `fastapi` and
-`celery-worker` services for a fully containerized deployment, but this project's established
-day-to-day workflow — and the rest of this guide — runs the API and worker natively inside the
-Conda environment instead, which is faster to iterate on and is what every verification in this
-README was actually run against.
+This starts `raylab-pgvector` (host port `5433`), `raylab-redis` (host port `6380`), and `raylab-rabbitmq` (host port `5673`, management UI on `15673`).
 
-### 3. Create the Conda environment (Python 3.11)
-
-```bash
-conda create -n raylab python=3.11 -y
-conda activate raylab
-```
-
-Python 3.11 is required — `pgvector` and other pinned dependencies need Python ≥3.9, and 3.11 is
-the version this project has been built and verified against.
-
-### 4. Install Python dependencies (CPU-only `torch` first)
+### 3.2 Install Python dependencies (CPU-only `torch` first)
 
 ```bash
 cd src
@@ -152,25 +114,17 @@ pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
 pip install -r requirements.txt   # torch is already satisfied; installs everything else
 ```
 
-`torch` **must** be installed from PyTorch's CPU-only wheel index *before* the rest of
-`requirements.txt`, not after and not by letting `pip` resolve it as a transitive dependency —
-a plain `pip install torch` (or letting `sentence-transformers` pull it in on its own) resolves
-the full CUDA build by default, which is multiple gigabytes of `nvidia-*` wheels this project has
-no use for on CPU-only hardware and which has previously exhausted constrained disk/temp space
-during install. `torch==2.13.0` is a hard floor, not a preference — `transformers` (pulled in by
-`sentence-transformers`) refuses to run `torch.load` below `torch>=2.6` (a CVE-related
-restriction). If you do have real GPU hardware you intend to use, install a matching CUDA build
-of `torch` yourself instead of the command above, before running `pip install -r requirements.txt`.
+`torch` **must** be installed from the CPU-only wheel index before the rest of `requirements.txt` — letting `pip` resolve it as a transitive dependency pulls the full CUDA build (multiple GB of `nvidia-*` wheels). If you have real GPU hardware you intend to use locally, install a matching CUDA build of `torch` yourself instead, before `pip install -r requirements.txt`.
 
-### 5. App and infrastructure environment files
+### 3.3 Configure environment files
 
 ```bash
 cp .env.example .env
-# defaults already match docker/env/.env.example.postgres — edit only if you changed those,
-# and set MSAL_CLIENT_ID / TOKEN_CACHE_ENCRYPTION_KEY before Step 3 (OneDrive) will work
+# edit .env: set POSTGRES_* to match docker/env/.env.postgres, and set
+# MSAL_CLIENT_ID / TOKEN_CACHE_ENCRYPTION_KEY (required for the OneDrive sync step)
 ```
 
-### 6. Run the Alembic database migrations
+### 3.4 Run database migrations
 
 ```bash
 cd models/db_schemes/raylab
@@ -179,2176 +133,134 @@ cp alembic.ini.example alembic.ini
 
 alembic upgrade head
 alembic current            # should print the current head revision id, marked (head)
+cd ../../..
 ```
-
-This applies the full migration chain against the fresh, empty database in one pass — every
-table (`knowledge_chunks`, `client_config`, `schema_registry`, `token_cache`, `staging_rows`,
-`evaluation_queries`, `shootout_results`) and every column added across all nine build steps,
-ending at the migration that dropped the `bucket` column from `schema_registry`/`staging_rows`
-(see `claude.md` §3.5). Alembic also creates the Postgres `vector` extension itself on first run
-— no manual `psql` step is needed for that.
 
 Verify the schema landed correctly:
 
 ```bash
-cd /path/to/Raylab_Project
 docker exec -it raylab-pgvector psql -U postgres -d raylab -c '\dt'
 ```
 
-Expect exactly 8 tables listed (plus Alembic's own `alembic_version` bookkeeping table).
+### 3.5 Onboard a client
 
-### 7. Start the FastAPI server
-
-```bash
-cd src   # if not already there
-uvicorn main:app --reload --port 8000
-```
-
-Smoke-test in a separate terminal:
-
-```bash
-curl http://localhost:8000/api/
-```
-
-Expect `{"app_name":"Raylab","app_version":"0.1"}`. If this hangs or errors, re-check step 2's
-container health before going further — this endpoint requires Postgres to be reachable.
-
-### 8. Start the Celery worker (with every required queue)
-
-In another terminal, same Conda environment:
-
-```bash
-conda activate raylab
-cd src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
-```
-
-Confirm the startup banner lists all six task modules —
-`tasks.onedrive_sync.fetch_and_dispatch`, `tasks.document_parsing.parse_and_stage`,
-`tasks.chunk_generation.generate_chunks`, `tasks.embedding_shootout.run_shootout`,
-`tasks.embedding_generation.generate_embeddings`, and `tasks.log_intent.log_intent_turn` — under
-`[tasks]`, and ends with `celery@<host> ready.`. There is deliberately no `celery -A celery_app
-beat` command anywhere in this project — OneDrive sync is human-initiated only via
-`POST /api/sync`, never on a schedule (`claude.md` §2.3).
-
-### 9. Client Onboarding
-
-**Required before running or testing the Sync API.** The database is fully migrated at this
-point but still has no `client_config` row and no OneDrive token cache — `POST /api/sync` will
-fail for any client until this step has been run for them at least once. Run
-`scripts/onboard_client.py`: it performs the one-time MSAL Device Code Flow login and seeds
-`client_config` (drive ID, folder Item ID, admin API key) together, in a single command, from
-argv rather than a hand-typed SQL string:
+**Required before `POST /api/sync` or any chat request will work.** This performs the one-time MSAL Device Code Flow login and seeds `client_config` (drive ID, folder Item ID, admin API key) in one step:
 
 ```bash
 cd scripts
 python onboard_client.py \
   --client raylab \
-  --drive-id FC04A7AF2B9235EE \
-  --item-id 'FC04A7AF2B9235EE!s5a9a50eefc4d481fbf61ea87425b6c0e' \
+  --drive-id <ONEDRIVE_DRIVE_ID> \
+  --item-id '<ONEDRIVE_SHARED_FOLDER_ITEM_ID>' \
   --api-key raylab-admin-test-key
+cd ..
 ```
 
-Follow the printed device-login instructions to complete the sign-in. Only once this finishes
-successfully is the client ready for `POST /api/sync` — see **Daily Startup**'s step 7 for the
-exact request. (The manual `psql`/heredoc equivalent this script replaces is still documented
-under **Step 3** and **Step 4** below, for reference.)
+Follow the printed device-login instructions to complete the sign-in.
 
-## Daily Startup (Resuming Work)
+### 3.6 Start the Celery worker
 
-Once everything from Steps 1–5 is already built and migrated, this is everything needed to bring
-the whole stack back up after a reboot/shutdown — no setup, just starting what already exists.
-Skip to **Local Setup & Development** below only if you're setting this up for the first time.
-
-### 1. Start Docker Desktop
-
-Open Docker Desktop on Windows and wait until it's fully running (whale icon settled in the system
-tray) before continuing — WSL2's Docker integration isn't ready until it is.
-
-### 2. Start the infrastructure containers
-
-```bash
-cd /mnt/d/Raylab_Project/docker
-docker compose up -d pgvector redis rabbitmq
-docker compose ps
-```
-
-Wait until all three show `healthy` — don't move on if any is still `starting`. If a container
-shows unhealthy or won't start, see the troubleshooting note at the end of this section.
-
-### 3. Activate the Python environment
-
-```bash
-conda activate raylab
-```
-
-### 4. Start the Celery worker (its own terminal — leave it running)
-
-```bash
-cd /mnt/d/Raylab_Project/src
-celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
-```
-
-Confirm the startup banner lists `tasks.onedrive_sync.fetch_and_dispatch`,
-`tasks.document_parsing.parse_and_stage`, `tasks.chunk_generation.generate_chunks`,
-`tasks.embedding_shootout.run_shootout`, `tasks.embedding_generation.generate_embeddings`, and
-`tasks.log_intent.log_intent_turn` under `[tasks]`, and ends with `celery@<host> ready.`
-
-### 5. Start the FastAPI server (a second terminal — leave it running too)
-
-```bash
-cd /mnt/d/Raylab_Project/src
-uvicorn main:app --reload --port 8000
-```
-
-### 6. Smoke-test before touching Postman
-
-```bash
-curl http://localhost:8000/api/
-```
-Expect `{"app_name":"Raylab","app_version":"0.1"}`. If this hangs or errors, the API can't reach
-Postgres — re-check step 2's container health before going further.
-
-### 7. Resume testing in Postman
-
-Same environment/requests as before — `POST {{base_url}}/api/sync` with header
-`X-Admin-Api-Key: raylab-admin-test-key` (the real, currently-onboarded `client_id` this resolves
-to is `raylab`, not `cairoscan` — see the Step 4 section below for how that mapping works).
-
-### If you hit a "Connection reset by peer" error on the first request back
-
-This has happened twice in this project already (once against Postgres, once against Redis) —
-both times the actual container was fine, but a pooled connection inside a long-lived process
-(or, once, the container itself) went stale across a Windows sleep/wake cycle. If it recurs:
-```bash
-docker restart raylab-pgvector raylab-redis raylab-rabbitmq
-```
-then repeat step 4–5 (restart the worker and API so they open fresh connections) before retrying
-in Postman. `pool_pre_ping=True` on the Postgres engines should self-heal most cases automatically
-now; a full restart is the fallback if it doesn't.
-
-## Local Setup & Development
-
-All commands below are run from a **WSL terminal**, with the working directory at the
-Windows-mounted repo path, e.g. `cd /mnt/d/Raylab_Project`.
-
-### 1. Environment setup (conda)
-
-```bash
-conda create -n raylab python=3.11 -y
-conda activate raylab
-```
-
-Python 3.11 is required — `pgvector` and other pinned dependencies need Python ≥3.9.
-
-### 2. Dependencies
+In its own terminal (same conda environment):
 
 ```bash
 cd src
-pip install -r requirements.txt
-```
-
-Installs `SQLAlchemy`, `asyncpg`, `psycopg2-binary`, `alembic`, `pgvector`, `python-dotenv`,
-`pydantic-settings` (Steps 1–2 scope — Step 2 needed no new packages; later steps append their
-own dependencies here as they're built, e.g. `pandas`/`openpyxl` for Step 5, `msal` for Step 3).
-
-### 3. App environment file
-
-```bash
-cp .env.example .env
-# defaults already match docker/env/.env.example.postgres — edit only if you changed those
-```
-
-### 4. Infrastructure (Docker — PostgreSQL + pgvector)
-
-```bash
-cd ../docker
-cp env/.env.example.postgres env/.env.postgres
-# edit docker/env/.env.postgres if you want a non-default password
-
-docker compose up -d pgvector
-docker compose ps            # wait until pgvector is "healthy"
-cd ..
-```
-
-Postgres is now reachable from the host at `localhost:5433` (mapped from the container's 5432),
-database `raylab`.
-
-### 5. Database migrations (Alembic)
-
-`alembic/env.py` is architecturally configured to run `CREATE EXTENSION IF NOT EXISTS vector;`
-against the connection at the start of every online migration run (`run_migrations_online()`,
-before `context.configure(...)`). This means a fresh Postgres volume never needs a manual
-`psql` step to enable pgvector's `vector` type — Alembic prepares it just-in-time on its own,
-every time. `env.py` also registers a `render_item` hook so `pgvector.sqlalchemy.Vector`
-columns render with a correct, self-contained import in generated migrations.
-
-```bash
-cd src/models/db_schemes/raylab
-cp alembic.ini.example alembic.ini
-# edit alembic.ini's sqlalchemy.url only if you changed the Postgres port/password/db name
-```
-
-Generate a migration from the current ORM models (`schemes/knowledge_chunk.py`, `client_config.py`):
-
-```bash
-alembic revision --autogenerate -m "create knowledge_chunks and client_config"
-```
-
-Apply it:
-
-```bash
-alembic upgrade head
-alembic current            # should print the new revision id, marked (head)
-```
-
-## Verifying Step 1
-
-Inspect the schema with `psql` (or the DBeaver equivalent — connect to `localhost:5433`,
-database `raylab`, and open the Columns/Indexes tabs for each table):
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c '\d knowledge_chunks'
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c '\d client_config'
-```
-
-Confirm: `client_id` is `NOT NULL` on `knowledge_chunks`; `embedding` is `vector(1024)`;
-`metadata` is `jsonb`; indexes `idx_chunks_client` (btree), `idx_chunks_metadata` (gin), and
-`idx_chunks_embedding_hnsw` (hnsw) are all present.
-
-Functional checks — insert a tenant config row and confirm persistence:
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "INSERT INTO client_config (client_id) VALUES ('cairoscan');"
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT * FROM client_config;"
-```
-
-Confirm multi-tenant isolation is enforced at the database level, not just in application code —
-this insert **must fail**:
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "INSERT INTO knowledge_chunks (client_id, content) VALUES (NULL, 'test');"
-```
-
-Expected: `ERROR: null value in column "client_id" of relation "knowledge_chunks" violates not-null constraint`
-
-## Step 2: Core Configuration & Dynamic Schema Registry
-
-### Architectural additions
-
-- **`helpers/config.py`** — extended additively with MSAL scaffolding (`MSAL_CLIENT_ID`,
-  `MSAL_TOKEN_CACHE_PATH`, reserved for Step 3) and `EMBEDDING_BACKEND_LITERAL` (Step 8's two
-  shootout candidates). Still zero logic, typed fields only.
-- **`schema_registry` table + `SchemaRegistryModel`** — one row per `(client_id, sheet_name)`,
-  holding the sheet's discovered column list, its `BucketEnum` bucket, and its mandatory fields.
-  Rows are written by the pipeline itself via `get_or_register()` (upsert-on-discovery) — never
-  hand-typed by an admin. An unregistered sheet is auto-inserted with `bucket='VECTOR_DB'` and no
-  mandatory fields; an already-registered sheet has its column list refreshed on every call
-  (picking up drift), while its bucket/mandatory fields are left untouched, since reclassifying
-  those is a separate, deliberate step (`update_bucket` / `set_mandatory_fields`).
-- **`utils/dynamic_schema_loader.py`** — the stateless call site Step 5's Sheet Dispatcher will
-  use: forwards whatever columns it's handed straight into `SchemaRegistryModel.get_or_register()`,
-  with zero sheet-specific branching. This is what keeps the pipeline schema-agnostic — the same
-  function registers a medical branch directory or a real-estate listings sheet identically.
-
-### Database migrations
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "create schema_registry"
-alembic upgrade head
-alembic current            # should show the new revision, chained after Step 1's, marked (head)
-```
-
-No manual edits to the generated migration were needed — `schema_registry` uses only `String`,
-`ARRAY(String)`, and `DateTime`, all natively rendered by Alembic (unlike Step 1's
-`pgvector.Vector`, which needed the `render_item` hook in `env.py`).
-
-### Verifying auto-discovery, column drift, and idempotency
-
-Run from `src/`, with the conda env active:
-
-```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from helpers.config import get_settings
-from models.SchemaRegistryModel import SchemaRegistryModel
-from models.enums.BucketEnum import BucketEnum
-
-
-async def main():
-    settings = get_settings()
-    conn = (
-        f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
-    )
-    engine = create_async_engine(conn)
-    db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    registry = await SchemaRegistryModel.create_instance(db_client)
-
-    # 1. Auto-discovery: unregistered sheet -> auto-inserted, Bucket A, no mandatory fields
-    row = await registry.get_or_register(
-        client_id="cairoscan",
-        sheet_name="Branch Directory",
-        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)"],
-    )
-    assert row.bucket == BucketEnum.VECTOR_DB.value
-    assert row.mandatory_fields == []
-
-    # 2. Column drift: client adds "WhatsApp Number" -> re-sync updates the column list in place
-    row2 = await registry.get_or_register(
-        client_id="cairoscan",
-        sheet_name="Branch Directory",
-        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)", "WhatsApp Number"],
-    )
-    assert "WhatsApp Number" in row2.columns
-
-    # 3. Idempotency: identical call again -> same row, no duplicate
-    row3 = await registry.get_or_register(
-        client_id="cairoscan",
-        sheet_name="Branch Directory",
-        discovered_columns=["Account", "Branch Name", "Address", "Working Hours (weekdays)", "WhatsApp Number"],
-    )
-    assert row3.columns == row2.columns
-
-    all_rows = await registry.list_sheets(client_id="cairoscan")
-    assert len(all_rows) == 1   # still exactly one row -> no duplicate was ever created
-
-    await engine.dispose()
-    print("ALL CHECKS PASSED")
-
-
-asyncio.run(main())
-EOF
-```
-
-Confirm at the DB level too:
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT client_id, sheet_name, bucket, columns, mandatory_fields FROM schema_registry;"
-```
-
-Expect exactly one row for `('cairoscan', 'Branch Directory')`, `bucket = 'VECTOR_DB'`, `columns`
-including `WhatsApp Number`, `mandatory_fields = '{}'`.
-
-## Step 3: OneDrive/MSAL Store — Authentication & Fetch Abstraction
-
-### Architectural additions
-
-- **`stores/onedrive/OneDriveInterface.py` / `OneDriveEnums.py` / `OneDriveProviderFactory.py` / `providers/MSALGraphProvider.py`** —
-  the same Ports & Adapters pattern as `stores/llm`/`stores/vectordb`. `authenticate(client_id)` and
-  `fetch_file(client_id, item_id)` are the only two contract methods; `client_id` is required, no
-  default, on both. `MSALGraphProvider` uses MSAL Device Code Flow against the `/consumers`
-  authority (OneDrive Personal only — never Client Credentials Flow), offloads every blocking
-  `msal`/`requests` call via `asyncio.to_thread`, and never opens its own DB session — it only
-  calls the injected `TokenCacheModel`.
-- **`TokenCacheModel`** — each client's MSAL token cache, Fernet-encrypted at rest
-  (`TOKEN_CACHE_ENCRYPTION_KEY`), keyed strictly by `client_id`. `authenticate()` raises
-  `ClientNotOnboardedError` — never a silent fallback to another tenant's cache — if no cache
-  row exists yet, or if silent token refresh fails (revoked/expired refresh token).
-
-### Database migrations
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "create token_cache"
-alembic upgrade head
-alembic current            # should show the new revision, chained after Step 2's, marked (head)
-```
-
-### Verifying the "not onboarded" isolation error (no Azure setup needed)
-
-```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from helpers.config import get_settings
-from models.TokenCacheModel import TokenCacheModel
-from stores.onedrive.OneDriveProviderFactory import OneDriveProviderFactory
-from stores.onedrive.OneDriveInterface import ClientNotOnboardedError
-
-
-async def main():
-    settings = get_settings()
-    conn = (
-        f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
-    )
-    engine = create_async_engine(conn)
-    db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    token_cache_model = await TokenCacheModel.create_instance(db_client)
-    factory = OneDriveProviderFactory(config=settings, token_cache_model=token_cache_model)
-    provider = factory.create(provider=settings.ONEDRIVE_AUTH_BACKEND)
-
-    try:
-        await provider.fetch_file(client_id="not-a-real-client", item_id="whatever")
-        print("FAIL: expected ClientNotOnboardedError")
-    except ClientNotOnboardedError as e:
-        print(f"PASS — {e}")
-
-    await engine.dispose()
-
-
-asyncio.run(main())
-EOF
-```
-
-The real `fetch_file` success path additionally requires a one-time Azure AD public-client app
-registration (Personal Microsoft accounts only, "Allow public client flows" = Yes,
-`Files.Read` delegated permission) and an interactive Device Code Flow login via
-`provider.register_client_via_device_flow(client_id)` — see the assistant's Step 3 implementation
-notes for the full walkthrough if you need to re-run it.
-
-## Step 4: On-Demand Sync Trigger
-
-### Architectural additions
-
-- **`main.py`** — the API-process composition root: builds the Postgres engine, `ClientConfigModel`,
-  and `SyncController`, and includes `routes/base.py` + `routes/sync.py`. Deliberately does **not**
-  build `TokenCacheModel`/OneDrive — the API process only ever needs Postgres and a Celery client
-  to enqueue tasks; OneDrive/MSAL is entirely a worker-process concern.
-- **`celery_app.py`** — the worker-process composition root (`get_setup_utils()`, mirroring
-  `main.py`'s `startup_span()`). Registers `tasks.onedrive_sync` and its queue in `task_routes`.
-  **There is no `beat_schedule` key anywhere in this file** — its absence is the proof that no
-  periodic/scheduled trigger exists for OneDrive sync (claude.md §2.3).
-- **`routes/sync.py`** — `POST /api/sync` (202 + `task_id`) and `GET /api/sync/{task_id}/status`.
-  Pure transport: no DB session or Celery internals touched directly in the route handlers — both
-  delegate to `SyncController`.
-- **`controllers/SyncController.py`** — resolves `client_id` from an admin API key (see below),
-  confirms `client_config.onedrive_item_id` is set, and enqueues `tasks.onedrive_sync.fetch_and_dispatch`.
-- **`tasks/onedrive_sync.py`** — the Celery task that actually calls `onedrive_client.fetch_file()`.
-  Chained into Step 5's parsing task once it exists; for now it ends at "fetch succeeded."
-
-**On "authenticated admin session":** Section 2's scope doesn't include a full admin-auth system
-(no user table, login, or JWT is defined anywhere in the 9 steps). Rather than invent one, `POST
-/api/sync` requires an `X-Admin-Api-Key` header, resolved server-side against a new
-`client_config.admin_api_key` column via `ClientConfigModel.get_client_id_by_admin_api_key()`.
-`client_id` is still never a client-supplied field — it's always resolved from the key, never
-trusted from the request body/path/query. This is a deliberate, minimal stand-in; a real
-admin-auth system would replace it wholesale, not extend it.
-
-### Infrastructure (Docker — Redis + RabbitMQ)
-
-```bash
-cd /mnt/d/Raylab_Project/docker
-cp env/.env.example.redis env/.env.redis
-cp env/.env.example.rabbitmq env/.env.rabbitmq
-
-docker compose up -d redis rabbitmq
-docker compose ps            # wait until both are "healthy"
-cd ..
-```
-
-Redis is reachable at `localhost:6380`, RabbitMQ's AMQP port at `localhost:5673` (management UI
-at `localhost:15673`).
-
-`docker/rabbitmq/rabbitmq.conf` (mounted read-only into the container) sets
-`consumer_timeout = 43200000` (12h) — RabbitMQ's default (30 min) closes the channel with a
-`PreconditionFailed (406)` if a long-running task (Step 8/9's CPU-only embedding generation,
-observed exceeding 30 minutes per file on this dev machine's hardware) doesn't ack in time, since
-`task_acks_late=True` means the ack only happens when the task *finishes*. The service also pins
-`hostname: raylab-rabbitmq` — without it, RabbitMQ's Mnesia queue/message data is keyed by
-Docker's randomized per-container hostname, so any container recreation (e.g. to pick up a config
-change) silently loses visibility into the previous node's durable queues, even though the data is
-still on the same persisted volume. Both were found and fixed the hard way — a real
-`consumer_timeout` crash mid-embedding, then a real lost-queue incident from recreating the
-container without a pinned hostname.
-
-### App environment file
-
-Add to `src/.env` (values must match whatever you set in `docker/env/.env.redis` /
-`.env.rabbitmq`):
-```
-CELERY_BROKER_URL="amqp://raylab_user:raylab_rabbitmq_2222@localhost:5673/raylab_vhost"
-CELERY_RESULT_BACKEND="redis://:raylab_redis_2222@localhost:6380/0"
-CELERY_TASK_SERIALIZER="json"
-CELERY_TASK_TIME_LIMIT=600
-CELERY_TASK_ACKS_LATE=true
-CELERY_WORKER_CONCURRENCY=2
-```
-
-### Database migration — `client_config.admin_api_key`
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "add admin_api_key to client_config"
-alembic upgrade head
-alembic current
-```
-
-### Seed a test admin API key
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "UPDATE client_config SET admin_api_key = 'test-cairoscan-admin-key', onedrive_item_id = 'placeholder-item-id' WHERE client_id = 'cairoscan';"
-```
-(If the `cairoscan` row doesn't exist yet, `INSERT INTO client_config (client_id, admin_api_key, onedrive_item_id) VALUES ('cairoscan', 'test-cairoscan-admin-key', 'placeholder-item-id');` instead.)
-
-> **Superseded for real onboarding:** hand-typing a `psql -c "..."` UPDATE like the one above is what corrupted a real `onedrive_item_id` in this exact project — bash's history expansion mangled a `!` inside the double-quoted string into a literal `\!`, and every Graph API call 400'd until it was caught and fixed by hand. `scripts/onboard_client.py` (see below) replaces this step and the Device Code Flow heredoc together, in one command, with no shell-interpolated SQL involved. Keep the manual `psql`/heredoc steps in this doc for troubleshooting and for understanding what the script actually does under the hood, not as the way to onboard a real client going forward.
-
-### Run the API and worker
-
-Two options — pick one. **Direct (fast iteration, WSL):**
-
-```bash
-cd /mnt/d/Raylab_Project/src
-uvicorn main:app --reload --port 8000
-```
-```bash
-# separate terminal, same conda env
-cd /mnt/d/Raylab_Project/src
-celery -A celery_app worker --queues=default,onedrive_sync --loglevel=info
-```
-
-**Or fully containerized:**
-```bash
-cd /mnt/d/Raylab_Project/docker
-docker compose up -d --build fastapi celery-worker
-```
-
-### Verify
-
-```bash
-curl -i -X POST http://localhost:8000/api/sync -H "X-Admin-Api-Key: test-cairoscan-admin-key"
-```
-Expect `202 Accepted` and a JSON body with a `task_id`. Since `onedrive_item_id` is a placeholder,
-the task itself will fail once it actually tries to fetch — that's expected without a real Azure
-app/Item ID (see Step 3's optional real-fetch path). Check status:
-```bash
-curl http://localhost:8000/api/sync/<task_id>/status -H "X-Admin-Api-Key: test-cairoscan-admin-key"
-```
-Watch `status` move `PENDING` → `STARTED` → `FAILURE` (or `SUCCESS` if you completed Step 3's
-real device-flow onboarding and used a real Item ID).
-
-Confirm the invalid-key path is rejected:
-```bash
-curl -i -X POST http://localhost:8000/api/sync -H "X-Admin-Api-Key: not-a-real-key"
-```
-Expect `401`.
-
-Confirm no periodic entry exists for this task — this is the proof polling was never
-reintroduced:
-```bash
-celery -A celery_app inspect scheduled
-```
-Expect an empty result for every worker (no scheduled entries at all).
-
-### Update: shared-folder, multi-file sync (post–Step 5)
-
-`fetch_and_dispatch` no longer fetches a single known file by Item ID. It now lists a shared
-OneDrive **folder**'s children via `GET /drives/{driveId}/items/{folderId}/children`, filters to
-items that are actual files (not sub-folders) whose name ends in `.xlsx`, and dispatches **one
-independent `parse_and_stage` call per file** — each scoped by its own file name as `source_file`,
-so a sync only ever replaces that specific file's previously-staged rows, never all of a client's
-files at once because one changed.
-
-- **`client_config`** gained `onedrive_drive_id` alongside the existing `onedrive_item_id` —
-  `onedrive_item_id` now means the shared folder's own Item ID (not a single workbook's).
-  Both are per-client, DB-sourced — never hardcoded in `stores/onedrive`.
-- **`OneDriveInterface`** gained a new port method, `fetch_files_in_folder(client_id, drive_id,
-  folder_id)` — an async generator yielding `(file_name, file_bytes)` for every `.xlsx` found,
-  following Graph's `@odata.nextLink` pagination. `fetch_file` (single-item fetch) is unchanged
-  and still used elsewhere (e.g. Item-ID lookups).
-- **`fetch_and_dispatch`**'s result shape changed: `parse_task_id` (singular) is now
-  `parse_task_ids` + `files_dispatched` (plural), since one sync can now produce many parse tasks.
-
-**Migration:**
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "add onedrive_drive_id to client_config"
-alembic upgrade head
-```
-
-**Re-seeding `client_config` for the shared-folder model** (replaces the single-file `UPDATE` from
-the Step 4 section above — `onedrive_item_id` must now be the *folder's* Item ID, not a file's):
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "UPDATE client_config SET onedrive_drive_id = '<the real driveId>', onedrive_item_id = '<the real folder Item ID>' WHERE client_id = 'cairoscan';"
-```
-
-## Step 5: Dynamic 1NF Sheet Parsing & Bucket Routing
-
-### Architectural additions
-
-- **`controllers/DocumentParsingController.py`** — one generic function for every sheet, every
-  client. For each sheet in the fetched workbook it calls
-  `SchemaRegistryModel.get_or_register(...)` (auto-registering brand-new sheets on the spot,
-  defaulted to Bucket A), validates against whichever mandatory fields are already configured,
-  and yields every row tagged with its `BucketEnum` — **every row of every bucket also carries
-  the `sheet_name` it came from**, injected dynamically from the same `wb.sheetnames` loop, never
-  a per-sheet special case (claude.md §3.6). Structural shape (merged cells, multi-row headers) is
-  trusted, never inferred, per claude.md §3.1 — a malformed sheet just produces garbage pandas
-  columns, which is the correct failure mode, not a bug to detect and repair.
-- **`tasks/document_parsing.py`** (`parse_and_stage`) — chained directly off Step 4's
-  `fetch_and_dispatch` (which now base64-encodes the fetched bytes and enqueues this task with
-  `source_file=onedrive_item_id`). Nothing is written until the *entire* workbook parses
-  successfully — one sheet failing mandatory-field validation fails the whole sync, never a
-  partial write.
-- **`staging_rows` + `StagingRowModel`** — **Bucket A only.** Delete-and-reinsert scoped to
-  `client_id` + `source_file`, exactly like `knowledge_chunks`.
-- **Bucket B/C are never written to the database** (claude.md §3.5) — `utils/template_file_writer.py`
-  is the only code allowed to render them, into `stores/llm/templates/clients/<client_id>/
-  {prompt_templates,system_directives}.py`, following the exact `string.Template`-per-variable
-  structure `mini-rag-tut-017`'s `templates/locales/<lang>/*.py` already uses. Each row's variable
-  name (`template_id`) is derived mechanically — a slug of `sheet_name` plus a slug of the row's
-  own first populated field — never a hand-authored mapping. Every sync fully overwrites the
-  file (the file-based equivalent of delete-and-reinsert). These generated files are gitignored;
-  `TemplateParser` (Step 9) will read them back at request time.
-- **`celery_app.py`'s `get_setup_utils()` now returns a dict**, not a positional tuple — additive
-  as more models get added across later steps, and `tasks/onedrive_sync.py` was updated to match.
-
-### New dependency
-
-```bash
-conda activate raylab
-cd /mnt/d/Raylab_Project/src
-pip install -r requirements.txt   # adds pandas, openpyxl
-```
-
-### Database migration — `staging_rows`
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "create staging_rows"
-alembic upgrade head
-alembic current
-```
-
-### Verifying — no live OneDrive needed
-
-Bucket routing, auto-discovery, and the generated template files can all be exercised directly
-against a local test workbook, bypassing Step 3's OneDrive fetch entirely. Run from `src/`, conda
-env active:
-
-```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-import asyncio
-import io
-
-import pandas as pd
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from helpers.config import get_settings
-from models.SchemaRegistryModel import SchemaRegistryModel
-from models.StagingRowModel import StagingRowModel
-from models.enums.BucketEnum import BucketEnum
-from controllers.DocumentParsingController import DocumentParsingController
-from utils.template_file_writer import write_template_file
-
-
-async def main():
-    settings = get_settings()
-    conn = (
-        f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
-    )
-    engine = create_async_engine(conn)
-    db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    schema_registry_model = await SchemaRegistryModel.create_instance(db_client)
-    staging_row_model = await StagingRowModel.create_instance(db_client)
-
-    client_id = "cairoscan"
-
-    # Build a tiny in-memory workbook: one brand-new Bucket-A sheet, one
-    # sheet we pre-classify as Bucket C (mimicking an engineer's deliberate
-    # reclassification per claude.md §3.2 point 5 — auto-discovery alone
-    # would default it to Bucket A).
-    branch_directory = pd.DataFrame([
-        {"Account": "cairoscan", "Branch Name": "Mohandessen", "Address": "45 Anas Ibn Malek"},
-        {"Account": "cairoscan", "Branch Name": "Maadi", "Address": "12 Road 9"},
-    ])
-    reservation_process = pd.DataFrame([
-        {"Step": "1", "Instruction": "Ask for patient name and phone number"},
-        {"Step": "2", "Instruction": "Confirm branch and preferred time slot"},
-    ])
-
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        branch_directory.to_excel(writer, sheet_name="Branch Directory", index=False)
-        reservation_process.to_excel(writer, sheet_name="Reservation Process", index=False)
-    workbook_bytes = buf.getvalue()
-
-    # Pre-classify Reservation Process as Bucket C, as an engineer would
-    await schema_registry_model.get_or_register(
-        client_id=client_id, sheet_name="Reservation Process",
-        discovered_columns=["Step", "Instruction"],
-    )
-    await schema_registry_model.update_bucket(
-        client_id=client_id, sheet_name="Reservation Process",
-        bucket=BucketEnum.SYSTEM_DIRECTIVE,
-    )
-
-    parser = DocumentParsingController(schema_registry_model=schema_registry_model)
-
-    bucket_a_rows, bucket_c_rows = [], []
-    async for bucket, sheet_name, row_data in parser.parse_workbook(client_id=client_id, workbook_bytes=workbook_bytes):
-        if bucket == BucketEnum.VECTOR_DB:
-            bucket_a_rows.append({"sheet_name": sheet_name, "row_data": row_data})
-        elif bucket == BucketEnum.SYSTEM_DIRECTIVE:
-            bucket_c_rows.append(row_data)
-
-    print("1) Bucket A rows parsed:", len(bucket_a_rows))
-    assert len(bucket_a_rows) == 2
-    assert bucket_a_rows[0]["row_data"]["sheet_name"] == "Branch Directory"
-
-    branch_row = await schema_registry_model.get_schema(client_id, "Branch Directory")
-    print("2) auto-registered Branch Directory bucket:", branch_row.bucket)
-    assert branch_row.bucket == BucketEnum.VECTOR_DB.value
-
-    await staging_row_model.delete_rows_by_source_file(client_id=client_id, source_file="test-source")
-    inserted = await staging_row_model.insert_many_rows(client_id=client_id, rows=bucket_a_rows, source_file="test-source")
-    print("3) staged rows:", inserted)
-
-    file_path = write_template_file(client_id=client_id, bucket=BucketEnum.SYSTEM_DIRECTIVE, rows=bucket_c_rows)
-    print("4) wrote template file:", file_path)
-    with open(file_path, encoding="utf-8") as f:
-        contents = f.read()
-    assert "Template(" in contents
-    assert "reservation_process" in contents.lower() or "Step" in contents
-
-    await engine.dispose()
-    print("ALL CHECKS PASSED")
-
-
-asyncio.run(main())
-EOF
-```
-
-Then confirm at the DB and filesystem level:
-
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT client_id, sheet_name, bucket, row_data->>'sheet_name' AS stamped_sheet FROM staging_rows;"
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT client_id, sheet_name, bucket FROM schema_registry WHERE client_id = 'cairoscan';"
-cat "src/stores/llm/templates/clients/cairoscan/system_directives.py"
-```
-
-Expect: two `staging_rows` for `Branch Directory` with `bucket='VECTOR_DB'` and `stamped_sheet='Branch Directory'`; `schema_registry` shows `Branch Directory` auto-registered as `VECTOR_DB` and `Reservation Process` as `SYSTEM_DIRECTIVE`; the generated file contains one `Template(...)` per Reservation Process row, and confirm **no** `prompt_templates`/`system_directives` table exists in Postgres:
-```bash
-docker exec -it raylab-pgvector psql -U postgres -d raylab -c "\dt"
-```
-
-### Verifying through the real sync pipeline (optional, end-to-end)
-
-With the API/worker running (§Step 4) and a real or placeholder OneDrive setup, `POST /api/sync`
-now chains automatically into `parse_and_stage` — check its status the same way as `fetch_and_dispatch`:
-```bash
-curl -X POST http://localhost:8000/api/sync -H "X-Admin-Api-Key: test-cairoscan-admin-key"
-# take the parse_task_id from fetch_and_dispatch's result once it's SUCCESS, then:
-curl http://localhost:8000/api/sync/<parse_task_id>/status -H "X-Admin-Api-Key: test-cairoscan-admin-key"
-```
-
-## Step 6: Dynamic Chunking Engine (Bucket A)
-
-### Architectural additions
-
-- **`controllers/ChunkingController.py`** — one generic, two-step process for every sheet's
-  already-staged Bucket-A rows, for every client:
-  1. Concatenate every non-empty field into `"label: value"`, walking `schema_registry`'s
-     discovered column order for that `(client_id, sheet_name)` — no exclusions, no statistical
-     calculation of any kind.
-  2. Only *then*, as a separate final step, prepend `"[Document: {file_name}] "` (extension
-     stripped) to the finished string.
-
-  Every chunk also carries `metadata.sheet_name` and `metadata.source_file`, and `chunk_type` is
-  stamped with the sheet name — the same "never a per-sheet special case" discipline as Step 5.
-- **`tasks/chunk_generation.py`** (`generate_chunks`) — chained directly off Step 5's
-  `parse_and_stage` once staging succeeds. Delete-and-reinserts into `knowledge_chunks`, scoped to
-  `(client_id, source_file)`, exactly like `staging_rows`. No embedding is generated yet — the
-  `embedding` column stays `NULL` until Step 8's shootout picks a backend.
-- **`celery_app.py`'s `get_setup_utils()`** now also returns `chunk_model` (a `ChunkModel`
-  instance) alongside the models added in earlier steps.
-
-### Why there's no boilerplate detection here
-
-An earlier version of `ChunkingController` additionally computed each column's duplication rate
-against a per-client `client_config.boilerplate_threshold` and excluded columns that cleared it,
-stamping the excluded fields into `metadata` instead of the embedded text. That mechanism has been
-**fully removed** after evaluating it against real `raylab` data: column-level exclusion would
-have silently deleted a single branch's genuinely informative "no wheelchair access" exception
-(measured duplication rate ~97.4% on that column, driven entirely by every *other* branch sharing
-the same value), and excluded text moved into `metadata` is invisible to both dense embedding
-*and* BM25/keyword search — `metadata` is only ever exact-match filterable, never free-text
-searchable. The real data measured across `raylab`'s 17 synced sheets turned out to already be
-dense and diverse (max column duplication ~26% outside that one small directory sheet), so the
-theoretical "vector dilution" risk the mechanism was meant to guard against wasn't worth the
-concrete, silent data-loss risk it introduced. See `claude.md` §3.8 for the full write-up. There
-is nothing per-client to configure for chunking anymore — `client_config.boilerplate_threshold`
-no longer exists as a column.
-
-### Database migration — drop `client_config.boilerplate_threshold`
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "drop boilerplate_threshold from client_config"
-alembic upgrade head
-alembic current   # ff0b5276e5cb (head)
-```
-
-Confirm at the DB level:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c "\d client_config"
-```
-Expect: no `boilerplate_threshold` row in the column list.
-
-### Verifying through the real sync pipeline
-
-With the API/worker running (§Step 4) and the real `raylab` OneDrive folder configured, trigger a
-full sync in **Postman** (never curl/raw scripts, per claude.md §4.3):
-
-1. `POST http://localhost:8000/api/sync` with header `X-Admin-Api-Key: <the real raylab admin key>`.
-2. Poll `GET http://localhost:8000/api/sync/<task_id>/status` for each chained task
-   (`fetch_and_dispatch` → `parse_and_stage` → `generate_chunks`, one chain per file in the shared
-   folder) until every one reports `SUCCESS`.
-
-Then confirm the result directly in Postgres (non-HTTP check, allowed under claude.md §4.3):
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT chunk_type, content, metadata FROM knowledge_chunks WHERE client_id = 'raylab' LIMIT 5;"
-```
-
-Expect, for every row:
-- `content` starts with `[Document: <file name without extension>] ` followed immediately by the
-  first populated field as `label: value`, then `. `-joined subsequent fields — nothing skipped
-  except genuinely empty cells.
-- `metadata` contains `sheet_name`, `source_file`, and `field_data` (Section 3 Step 1's structured
-  field preservation, added later — see that section below) — **no** `boilerplate_excluded_fields`
-  key exists anymore, on any row, for any sheet.
-- Row count for a given `source_file` matches its staged row count in `staging_rows` exactly (no
-  exclusions means no row/column ever silently disappears from the embedded text).
-
-## Step 7: Vector DB Storage Layer (Multi-Tenant pgvector)
-
-### Architectural additions
-
-- **`stores/vectordb/VectorDBInterface.py`** — the port: `insert_many(client_id, chunks)` and
-  `search_by_vector(client_id, query_vector, top_k, metadata_filters)`. `client_id` is required, no
-  default, on both — it is impossible to call either without a tenant scope, enforced at the
-  signature itself (claude.md §1.3).
-- **`stores/vectordb/providers/PGVectorProvider.py`** — the concrete adapter. Every query is
-  built with `.where(KnowledgeChunk.client_id == client_id)` at the SQLAlchemy level (never a
-  filter applied after the fact), plus `.where(KnowledgeChunk.embedding.isnot(None))` so
-  not-yet-embedded rows (everything, until Step 8) are excluded rather than erroring or sorting
-  arbitrarily. Similarity ordering uses pgvector's `cosine_distance()` (the `<=>` operator),
-  matching `idx_chunks_embedding_hnsw`'s `vector_cosine_ops`. When `metadata_filters` is given, it's
-  applied as a JSONB containment match (`metadata @> filters`) — never a free-text match.
-- **`stores/vectordb/VectorDBEnums.py`** / **`VectorDBProviderFactory.py`** — the same config-driven
-  selection pattern as `stores/onedrive`. Swapping pgvector for a hosted vector DB later is one new
-  `providers/` file plus one branch in the factory — `ChunkModel` and every controller stay
-  untouched.
-- **`models/ChunkModel.py`** — `insert_many_chunks` and the new `search_by_vector` no longer run
-  their own SQL; both delegate to the injected `vectordb_client`. `create_chunk`,
-  `delete_chunks_by_source_file`, and `get_total_chunks_count` are unchanged (they're plain
-  relational operations, not vector-specific, so they stay as direct repository methods).
-- **`celery_app.py`'s `get_setup_utils()`** now builds a `VectorDBProviderFactory`, creates the
-  `vectordb_client` from `settings.VECTOR_DB_BACKEND`, injects it into `ChunkModel`, and returns it
-  in the dict too (for direct use once Step 9's `RetrievalController` needs it). `main.py` is
-  **not** touched — the API process has no route that needs vector search yet (that's Step 9).
-- **`helpers/config.py`** gained `VECTOR_DB_BACKEND_LITERAL` / `VECTOR_DB_BACKEND` (default
-  `PGVECTOR`), identical pattern to `ONEDRIVE_AUTH_BACKEND`.
-
-No database migration in this step — `knowledge_chunks`/`embedding` already existed from Step 1;
-Step 7 only adds an access-layer abstraction on top of it. `celery_app.py`'s composition root did
-change, though — **restart any running Celery worker** before relying on this step's behavior in
-the live pipeline (a standalone verification script, like the one below, always picks up the
-current code since it imports fresh on each run, so this only matters for a long-lived worker
-process you started before this change).
-
-### Two things this step's test *can't* prove yet, and why
-
-1. **No real embeddings exist yet.** Step 6 deliberately leaves `embedding` `NULL` on every chunk
-   — that only gets populated in Step 8's shootout. So `search_by_vector`'s *semantic* relevance
-   can't be verified yet; what Step 7 verifies is that the storage/query **plumbing** (SQL
-   correctness, cosine ordering, `client_id` isolation) works. The script below proves that using
-   temporary placeholder vectors on **real, already-synced `raylab` content rows** it creates and
-   deletes itself — not fabricated business data, just numeric probes to exercise the SQL, deleted
-   at the end of the run. Real relevance testing is Step 8/9's job.
-2. **`cairoscan`/`technoscan` are not separate `client_id`s in this real environment.** Per
-   claude.md §3.4, they're two brand values inside `client_id='raylab'`'s own data (the `Account`
-   column, read at parse time) — there's only one real tenant onboarded right now. So the isolation
-   test below proves the same property the Implementation Plan asks for (zero cross-tenant leakage)
-   using a second, clearly-labeled probe `client_id` instead of a real second client — legitimate
-   under claude.md §4.3's carve-out for edge-case probes against real infrastructure.
-
-### Verifying — real content, temporary probe vectors, real infrastructure
-
-Run from `src/`, conda env active (this reuses `celery_app.py`'s actual composition root, so it
-exercises the real `ChunkModel` → `VectorDBProviderFactory` → `PGVectorProvider` wiring, not a
-stand-in):
-
-```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-import asyncio
-
-from celery_app import get_setup_utils
-from models.db_schemes.raylab.schemes import KnowledgeChunk
-
-DIM = 1024
-PROBE_SOURCE_FILE = "__step7_verification_probe__"
-
-
-def vector(active_index: float, magnitude: float = 1.0) -> list[float]:
-    v = [0.0] * DIM
-    v[0] = magnitude
-    v[1] = active_index
-    return v
-
-
-async def main():
-    setup = await get_setup_utils()
-    chunk_model = setup["chunk_model"]
-
-    try:
-        await chunk_model.delete_chunks_by_source_file(client_id="raylab", source_file=PROBE_SOURCE_FILE)
-        await chunk_model.delete_chunks_by_source_file(client_id="__step7_isolation_probe__", source_file=PROBE_SOURCE_FILE)
-
-        raylab_close = KnowledgeChunk(
-            client_id="raylab", content="[probe] raylab close vector",
-            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
-            embedding=vector(active_index=0.05), metadata_payload={},
-        )
-        raylab_far = KnowledgeChunk(
-            client_id="raylab", content="[probe] raylab far vector",
-            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
-            embedding=vector(active_index=0.9), metadata_payload={},
-        )
-        other_tenant = KnowledgeChunk(
-            client_id="__step7_isolation_probe__", content="[probe] other-tenant vector",
-            source_file=PROBE_SOURCE_FILE, chunk_type="__probe__",
-            embedding=vector(active_index=0.0), metadata_payload={},
-        )
-
-        inserted = await chunk_model.insert_many_chunks(client_id="raylab", chunks=[raylab_close, raylab_far])
-        inserted_other = await chunk_model.insert_many_chunks(client_id="__step7_isolation_probe__", chunks=[other_tenant])
-        print(f"1) inserted {inserted} raylab probe rows, {inserted_other} other-tenant probe row")
-
-        query_vector = vector(active_index=0.0)  # closest to other_tenant, then raylab_close, then raylab_far
-        results = await chunk_model.search_by_vector(client_id="raylab", query_vector=query_vector, top_k=5)
-
-        result_ids = [str(r.id) for r in results]
-        print(f"2) search_by_vector(client_id='raylab') returned {len(results)} rows")
-        assert all(r.client_id == "raylab" for r in results)
-        assert str(raylab_close.id) in result_ids and str(raylab_far.id) in result_ids
-        assert str(other_tenant.id) not in result_ids
-        print("   PASS -- other tenant's row does NOT appear, even though it was vector-closest")
-
-        assert results[0].id == raylab_close.id
-        print("   PASS -- ordering correct: closer probe vector ranked before the farther one")
-
-        try:
-            await chunk_model.search_by_vector(query_vector=query_vector, top_k=5)
-            print("3) FAIL: search_by_vector ran without client_id")
-        except TypeError as e:
-            print(f"3) PASS -- search_by_vector refuses to run without client_id: {e}")
-
-        try:
-            await chunk_model.insert_many_chunks(chunks=[raylab_close])
-            print("4) FAIL: insert_many_chunks ran without client_id")
-        except TypeError as e:
-            print(f"4) PASS -- insert_many_chunks refuses to run without client_id: {e}")
-
-        print("ALL CHECKS PASSED")
-
-    finally:
-        await chunk_model.delete_chunks_by_source_file(client_id="raylab", source_file=PROBE_SOURCE_FILE)
-        await chunk_model.delete_chunks_by_source_file(client_id="__step7_isolation_probe__", source_file=PROBE_SOURCE_FILE)
-        await setup["db_engine"].dispose()
-
-
-asyncio.run(main())
-EOF
-```
-
-Expect `ALL CHECKS PASSED` with all four numbered checks printing `PASS`.
-
-Confirm no residue was left behind, and that the real `raylab` row count is untouched:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT count(*) FROM knowledge_chunks WHERE source_file = '__step7_verification_probe__' OR client_id = '__step7_isolation_probe__';"
-# expect 0
-
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT count(*) FROM knowledge_chunks WHERE client_id = 'raylab';"
-# expect the same real count as before this script ran (e.g. 1869 as of this writing)
-```
-
-## Step 8: Embedding Model Shootout (BAAI/bge-m3 vs. Swan-Large)
-
-### Real research findings that shaped this step
-
-Before writing any code, two real, concrete blockers were found while researching Swan-Large
-(`UBC-NLP/swan-large`), the proposal's named second candidate:
-
-1. **Its HuggingFace repo is almost certainly gated.** Both `huggingface.co/UBC-NLP/swan-large`
-   and its API endpoint (`/api/models/UBC-NLP/swan-large`) return `401 Unauthorized` — normal
-   public model pages don't do that. Downloading it for real needs a HuggingFace account,
-   accepting a license/terms agreement, and a valid `HF_TOKEN`.
-2. **It's architecturally much heavier than the proposal assumed.** The published paper
-   (arXiv:2411.01192) confirms Swan-Large is built on **ArMistral-7B** — a 7-billion-parameter
-   Mistral-based Arabic LLM — not a lightweight BERT-style encoder like BGE-M3 (~580MB). A
-   7B-parameter model needs roughly 14GB+ just to load its weights in fp16. This dev machine's
-   actual hardware was checked directly: GPU is a **Quadro M2200 with 4GB VRAM**, and **WSL2 is
-   allocated only 3.7GB of total RAM** — both far short of what Swan-Large needs, independent of
-   the gating issue.
-
-Given both blockers, the decision (confirmed with the user) was: **build the complete,
-swappable architecture now; BGE-M3 fully working; Swan-Large wired into the same interface but
-deliberately failing loudly rather than fabricating output**, so promoting a real, working
-Swan-Large later — once gated access and adequate hardware exist — is a config change, not a
-rewrite.
-
-### Architectural additions
-
-- **`stores/llm/LLMInterface.py`** — the port: `embed_text(texts, is_query)` and an
-  `embedding_dimension` property. `ChunkingController` (a future wiring, not yet done — see below)
-  and `RetrievalController` (Step 9) will only ever call this interface, never a specific model
-  class.
-- **`stores/llm/providers/BGEM3Provider.py`** — real, working. Lazily loads
-  `BAAI/bge-m3` via `sentence-transformers` on first use (class-level cache, shared across
-  instances — the model is thread-safe for inference), prepends the model's documented query
-  instruction prefix only to query texts (never document texts), and always encodes with
-  `normalize_embeddings=True` (required for cosine similarity to be meaningful). 1024-dim output —
-  matches `knowledge_chunks.embedding`'s existing column with no schema change.
-- **`stores/llm/providers/SwanLargeProvider.py`** — deliberately non-functional right now. Its
-  `_get_model()`/`embedding_dimension` both raise `SwanLargeUnavailableError` with the exact
-  research findings above, rather than guessing a prefix convention or a fake dimension. The
-  proposal itself (Implementation Plan, Step 8) explicitly warns against assuming BGE-M3's prefix
-  rules apply to Swan-Large without checking its own model card — since gated access blocks
-  checking that, this class leaves `QUERY_PREFIX = ""` marked `UNCONFIRMED` rather than guessing.
-- **`stores/llm/LLMEnums.py`** / **`LLMProviderFactory.py`** — same config-driven pattern as
-  `stores/onedrive`/`stores/vectordb`. Both `BGE_M3` and `SWAN_LARGE` are registered even though
-  the latter can't run yet — the enum/factory represent the interface contract, not current
-  runnability.
-- **`controllers/EmbeddingShootoutController.py`** — orchestration only. For each candidate model:
-  embeds this client's **entire real, already-chunked content** (`ChunkModel.get_all_chunks`) into
-  that model's own **in-memory scratch pool** (a plain NumPy matrix — never
-  `knowledge_chunks.embedding` itself, since the production column belongs to whichever model is
-  eventually promoted, and candidates aren't guaranteed to share its dimensionality); scores top-K
-  retrieval accuracy against `evaluation_queries` using a plain dot product (mathematically cosine
-  similarity here, since every provider normalizes its output). A candidate that raises during
-  loading (Swan-Large, right now) is caught **per-model** — one candidate's failure never blocks
-  the other's real result from being scored and persisted.
-- **`models/EvaluationQueryModel.py`** + **`evaluation_queries`**/**`shootout_results`** tables —
-  the shared benchmark query set and its scored results. `evaluation_queries` pairs a real
-  Egyptian-Arabic-style question with the real `knowledge_chunks.id` that answers it — grounded in
-  this client's actual synced content, not fabricated business facts (claude.md §4.3); only the
-  questions themselves are a designed evaluation harness, exactly as the proposal describes for
-  bootstrapping a benchmark before real user query logs exist. `shootout_results.top_k_accuracy`
-  and `.error_message` are both nullable — a candidate that can't run still gets a row recording
-  *why*, never a silently missing result.
-- **`tasks/embedding_shootout.py`** (`run_shootout`) — the Celery task. Time limit overridden to
-  1800s (a first run also downloads BGE-M3's weights and CPU-encodes the client's full real chunk
-  set). No HTTP route exists for this yet, matching the Implementation Plan (Step 8 lists no
-  route) — it's triggered directly via `.delay()`, the same way earlier steps' verification
-  scripts have always invoked tasks directly when no endpoint exists for them.
-- **`ChunkModel.get_all_chunks(client_id)`** — new plain repository read (not vector-specific, so
-  it doesn't delegate to `vectordb_client`) backing the controller's scratch-pool construction.
-- **`helpers/config.py`** gained `EMBEDDING_BACKEND` (default `BGE_M3` — the one that actually
-  works right now) and `HF_TOKEN` (optional, only consumed by `SwanLargeProvider`).
-- **`celery_app.py`** — composition root now also builds `EvaluationQueryModel` and registers
-  `tasks.embedding_shootout` + its own queue; `get_setup_utils()`'s dict also exposes `settings`
-  directly now (the task needs `EMBEDDING_BACKEND_LITERAL` and `HF_TOKEN`, not just the models).
-
-**Not wired up yet, on purpose:** `ChunkingController`/`chunk_generation.py` still leave
-`embedding` `NULL` — this step is the shootout only. Promoting a winner to actually populate
-`knowledge_chunks.embedding` on every sync is a follow-on wiring change once a real winner is
-chosen (i.e. once Swan-Large either becomes real, or BGE-M3 wins by default) — doing it now would
-mean writing production embeddings from a benchmark that hasn't run its second candidate for real
-yet.
-
-### New dependencies
-
-`torch` **must** be installed from PyTorch's CPU-only wheel index *before* the rest of
-`requirements.txt` — a plain `pip install torch` on Linux pulls the full CUDA dependency bundle
-(cublas, cudnn, etc. — 2GB+ of `nvidia-*` wheels) by default, which this dev machine can't even
-download: WSL2's `/tmp` is a RAM-backed `tmpfs` capped at ~1.9GB (matching its 3.7GB total RAM
-allocation), so the CUDA download blows past it with `OSError: No space left on device` even
-though the real disk has hundreds of GB free. The CPU-only wheel avoids this entirely — it's a
-fraction of the size and doesn't touch `/tmp` for anything close to that long:
-
-```bash
-conda activate raylab
-cd /mnt/d/Raylab_Project/src
-pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
-pip install -r requirements.txt   # torch already satisfied; installs sentence-transformers, numpy
-```
-This machine's GPU (Quadro M2200, 4GB VRAM) offers no real benefit for BGE-M3 anyway and is
-nowhere near enough for Swan-Large regardless — install a real CUDA build yourself only if you
-move this to GPU hardware that can actually use it.
-
-### Database migration — `evaluation_queries` + `shootout_results`
-
-```bash
-cd src/models/db_schemes/raylab
-alembic revision --autogenerate -m "create evaluation_queries and shootout_results"
-alembic upgrade head
-alembic current   # 83b89604b9c4 (head)
-```
-
-Confirm at the DB level:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c "\d evaluation_queries"
-docker exec raylab-pgvector psql -U postgres -d raylab -c "\d shootout_results"
-```
-
-### Verifying — real content, real BGE-M3, Swan-Large's expected real failure
-
-This seeds a real, grounded benchmark query set (8 questions, each paired with a genuine
-`knowledge_chunks.id` already synced from `raylab`'s real OneDrive content across four different
-real sheets), then runs the actual shootout. Run from `src/`, conda env active — **the first run
-downloads BGE-M3's ~580MB weights and CPU-encodes the client's full real chunk set, so expect this
-to take a few minutes**:
-
-```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-import asyncio
-
-from celery_app import get_setup_utils
-from controllers.EmbeddingShootoutController import EmbeddingShootoutController
-from stores.llm.LLMProviderFactory import LLMProviderFactory
-
-CLIENT_ID = "raylab"
-
-QUERIES = [
-    {"query_text": "هل فرع المهندسين فيه كرسي متحرك؟", "expected_chunk_id": "3055e5f4-f24e-4ff3-b88a-a5df5417a3f1"},
-    {"query_text": "مواعيد المعمل في فرع الجيزة يوم الجمعة ايه؟", "expected_chunk_id": "ed564227-a909-4439-bed9-b713864e9acf"},
-    {"query_text": "هل فيه اسانسير في فرع اكتوبر؟", "expected_chunk_id": "80d45936-2b8b-440d-83b7-5d3e9d05d25e"},
-    {"query_text": "هل ينفع اشرب مية قبل سونار البطن والحوض؟", "expected_chunk_id": "7299fb09-6146-442a-ab00-1d6dd6a5c670"},
-    {"query_text": "عايز اعرف التحضير المطلوب لسونار البروستاتا عن طريق الشرج", "expected_chunk_id": "94dcf2ca-732b-40f8-883f-abe942f27bcb"},
-    {"query_text": "انا عضو نقابة المهندسين هل ممكن احضر الموافقة من الفرع؟", "expected_chunk_id": "9641cc47-20c1-4434-b7fb-0ae248ef182e"},
-    {"query_text": "نقابة تجاريين القاهرة الموافقة بتتحضر منين، من الفرع ولا النقابة؟", "expected_chunk_id": "452351f5-68b2-408f-82a1-100298811a8d"},
-    {"query_text": "عايز اعرف تفاصيل تحليل فحص الخلايا عن طريق سائل من الجسم", "expected_chunk_id": "f5e1c973-c23e-47cb-8a9b-250d4601b881"},
-]
-
-
-async def main():
-    setup = await get_setup_utils()
-    settings = setup["settings"]
-    evaluation_query_model = setup["evaluation_query_model"]
-
-    try:
-        seeded = await evaluation_query_model.seed_queries(client_id=CLIENT_ID, queries=QUERIES)
-        print(f"1) seeded {seeded} real, grounded benchmark queries for client_id={CLIENT_ID!r}")
-
-        controller = EmbeddingShootoutController(
-            chunk_model=setup["chunk_model"],
-            evaluation_query_model=evaluation_query_model,
-            llm_provider_factory=LLMProviderFactory(config=settings),
-        )
-
-        total_chunks = await setup["chunk_model"].get_total_chunks_count(CLIENT_ID)
-        print(f"2) running shootout against {total_chunks} real chunks -- this can take a few minutes")
-        results = await controller.run_shootout(client_id=CLIENT_ID, model_names=settings.EMBEDDING_BACKEND_LITERAL, top_k=5)
-
-        for r in results:
-            if r["error"] is None:
-                print(f"   PASS -- {r['model_name']}: top_5_accuracy = {r['top_k_accuracy']:.3f}")
-            else:
-                print(f"   EXPECTED FAILURE -- {r['model_name']}: {r['error'][:200]}")
-
-        assert any(r["model_name"] == "BGE_M3" and r["error"] is None for r in results)
-        assert any(r["model_name"] == "SWAN_LARGE" and r["error"] is not None for r in results)
-        print("ALL CHECKS PASSED")
-
-    finally:
-        await setup["db_engine"].dispose()
-
-
-asyncio.run(main())
-EOF
-```
-
-Confirm at the DB level:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT model_name, top_k_accuracy, query_count, top_k, left(error_message, 80) AS error FROM shootout_results WHERE client_id='raylab' ORDER BY evaluated_at;"
-```
-Expect: one `BGE_M3` row with a real, non-null `top_k_accuracy` (a real number between 0 and 1 —
-not a fabricated/expected value, whatever the actual model produces against this real query set),
-and one `SWAN_LARGE` row with `top_k_accuracy = NULL` and a populated `error_message` explaining
-the gated-access/hardware blocker — a recorded, explained failure, never a silently missing row.
-
-### If/when Swan-Large becomes real
-
-Once gated HuggingFace access is granted (accept the license on its model page, generate a token)
-and this runs on hardware with enough VRAM/RAM: set `HF_TOKEN` in `.env`, confirm Swan-Large's real
-query/document prefix convention from its actual model card (never assume BGE-M3's), fill in
-`SwanLargeProvider.QUERY_PREFIX` and `embedding_dimension` for real, and re-run the script above —
-no other file changes, since both candidates already sit behind the same `LLMInterface`.
-
-### Automatic Embedding Generation (promoting BGE-M3 to production)
-
-Steps 5–8, as originally built, left a real gap: `chunk_generation.py` wrote every real chunk
-with `embedding = NULL`, and Step 8's shootout deliberately never wrote back to that column (it
-only ever built its own in-memory scratch pool — see above). Nothing in the sync pipeline actually
-populated production embeddings. This section closes that gap.
-
-**What was added:**
-- **`stores/vectordb/VectorDBInterface.py` / `PGVectorProvider.py`** gained `update_embeddings(client_id, embeddings)` —
-  bulk-writes computed vectors back onto existing rows, still scoped by `client_id` at the SQL level.
-- **`models/ChunkModel.py`** gained `update_embeddings` (delegates to the vectordb adapter) and
-  `get_chunks_without_embedding(client_id, source_file=None)` (a plain relational read — filtering
-  on `embedding IS NULL`, not comparing vectors — so it stays a direct repository method).
-- **`controllers/EmbeddingGenerationController.py`** — `embed_chunks(client_id, source_file=None)`.
-  Fetches whatever's missing an embedding, embeds it in small batches via whichever provider it's
-  handed (`settings.EMBEDDING_BACKEND` via `LLMProviderFactory` — never constructed by the
-  controller itself), and **commits incrementally, one batch at a time**. If interrupted partway
-  (crash, Celery time-limit kill, `Ctrl+C`), already-embedded chunks are never lost, and re-running
-  the exact same call only ever processes what's *still* missing — the selection criterion is
-  always `embedding IS NULL`, never a positional offset that could skip or repeat rows.
-- **`tasks/embedding_generation.py`** (`generate_embeddings`) — the Celery task. Two ways it's used:
-  1. **Automatic, chained**: `tasks/chunk_generation.py` now calls `generate_embeddings.delay(client_id=client_id, source_file=source_file)` right after inserting a sync's chunks — every future sync
-     embeds its own freshly-chunked rows with no manual step.
-  2. **Manual backfill**: call the exact same task **without `source_file`** to process every chunk
-     across a client's whole history still missing an embedding — this covers everything synced
-     before this wiring existed. Same task, same controller, same code — just a wider scope.
-- **`client_config` schema unchanged** — this addition needed no new migration.
-
-**A real, honest caveat about hardware**: this dev machine's BGE-M3 CPU encoding is extremely slow
-(the Step 8 shootout above took multiple hours to encode this same ~1,869-chunk corpus). A full
-backfill will likely take a very long time here. This is why `generate_embeddings`' task time limit
-is set to 21600s (6h, overriding the global 600s default) — and why being interrupted is *safe*:
-thanks to the incremental-commit design, re-running the identical command afterward simply resumes
-from whatever's still `NULL`, never redoing already-embedded rows or losing progress.
-
-### Running the backfill for existing data
-
-```bash
-# 1. Apply the migration if you haven't already (no-op if already at head)
-cd src/models/db_schemes/raylab
-alembic upgrade head
-alembic current   # 32f61443e199 (head)
-
-# 2. Restart the Celery worker so it picks up the new task + queue
-cd /mnt/d/Raylab_Project/src
 celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
 ```
 
-In a separate terminal, enqueue the backfill (no `source_file` = every un-embedded chunk for this client):
+Leave this running. Confirm the startup banner ends with `celery@<host> ready.`.
+
+### 3.7 Start the FastAPI server
+
+In a second terminal (same conda environment):
+
 ```bash
-cd /mnt/d/Raylab_Project/src
-python <<'EOF'
-from tasks.embedding_generation import generate_embeddings
-task = generate_embeddings.delay(client_id="raylab")
-print("enqueued task_id:", task.id)
-EOF
-```
-
-Watch real, incremental progress either in the Celery worker's own log (`embedded X/Y chunks so
-far` lines), or by re-running this query periodically — the count only ever goes up, never resets:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT count(*) AS total, count(embedding) AS with_embedding FROM knowledge_chunks WHERE client_id='raylab';"
-```
-Expect `with_embedding` to climb from `0` toward `total` over time. If it stalls or the task gets
-killed by the time limit, just re-run the `generate_embeddings.delay(...)` script above — it picks
-up exactly where it left off.
-
-### Testing that automatic embedding works for future syncs
-
-Trigger a real sync in Postman as usual (`POST /api/sync`), then poll the chained task IDs in order
-— `fetch_and_dispatch` → `parse_and_stage` → `generate_chunks` → **`embedding_task_id`** (new, in
-`generate_chunks`'s result) — until the last one reports `SUCCESS`. Confirm at the DB level that the
-specific file you just synced now has embeddings:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT count(*) AS total, count(embedding) AS with_embedding FROM knowledge_chunks WHERE client_id='raylab' AND source_file='<the file you synced>';"
-```
-Expect `with_embedding = total` for that file once the embedding task finishes — no manual backfill
-step needed for anything synced from now on.
-
-## Step 9: Hybrid Retrieval Endpoint
-
-### Architectural additions
-
-- **`routes/schemes/retrieval.py`** — `RetrieveRequest` (`query`, optional `metadata_filters`) /
-  `RetrieveResponse` (`client_id`, `query`, `results: list[RetrievedChunk]`). `top_k` is
-  deliberately **not** a request field — it's a per-tenant `client_config.retrieval_top_k` value,
-  never something a caller can override (claude.md §1.3).
-- **`routes/retrieval.py`** — `POST /api/retrieve`. `client_id` is resolved server-side from the
-  `X-Admin-Api-Key` header — the exact same mechanism `routes/sync.py` already uses
-  (`ClientConfigModel.get_client_id_by_admin_api_key`). Section 2 has no broader session/auth
-  system in scope (the Implementation Plan's "resolves client_id from session context" language
-  refers to Section 3/4's WhatsApp/Voice context-aware routing, which is explicitly out of scope —
-  claude.md §2.1); reusing the already-established admin-key mechanism was the deliberate choice
-  over inventing a second, parallel auth path for one endpoint. Transport only — no DB session or
-  business logic touched directly.
-- **`controllers/RetrievalController.py`** — orchestration only:
-  1. Fetches `client_config`, validates any `metadata_filters` keys against
-     `client_config.allowed_metadata_keys` — an unrecognized key raises `MetadataFilterValidationError`
-     (mapped to `422`), never silently ignored or matched against nothing (claude.md §3.4).
-  2. Embeds the query via `app.embedding_client.embed_text(is_query=True)`.
-  3. Calls `chunk_model.hybrid_search(...)` for the fused dense+sparse candidate pool.
-  4. Re-ranks that pool via `app.reranker_client.rerank(...)`, returns the final `retrieval_top_k`.
-- **`stores/vectordb/providers/PGVectorProvider.py`** gained `search_by_bm25` (Postgres full-text
-  search using the `'simple'` config — stock Postgres has no Arabic stemming dictionary, so
-  `'simple'` tokenize-and-lowercase is the honest choice, not `'english'`) and `hybrid_search`
-  (runs both legs, fuses via standard Reciprocal Rank Fusion: `score = Σ 1/(rrf_k + rank)` over
-  whichever leg(s) a chunk appears in). If the dense leg is empty (no embeddings yet for this
-  client), fusion gracefully degrades to sparse-only ranking — never an error.
-- **`stores/reranker/*`** — `RerankerInterface`/`RerankerEnums`/`RerankerProviderFactory`/
-  `providers/CrossEncoderProvider.py`, the same Ports & Adapters pattern as `stores/llm`/
-  `stores/vectordb`. Uses `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` — small (~470MB), ungated,
-  multilingual (mMARCO covers Arabic) — deliberately not a larger reranker, since re-ranking runs
-  synchronously on every retrieval request's latency path, and this dev machine's real hardware
-  constraints make request-time latency a hard concern here, not a nice-to-have.
-- **`client_config`** gained `retrieval_top_k` (default `5`) and `rrf_k` (default `60`) — claude.md
-  §1.3 names top-K and RRF's k explicitly as values that must never be hardcoded Python constants.
-  The candidate pool size fed into fusion (`candidate_k`) is a derived multiple of `top_k` computed
-  in code, not a separate config value — it's an internal quality/performance tradeoff, not a
-  per-tenant business decision the way top-K and RRF's k are.
-- **`main.py`** — the API composition root now also builds `vectordb_client`, `chunk_model`,
-  `embedding_client`, `reranker_client`, and `retrieval_controller` at startup, and includes
-  `retrieval.retrieval_router`. `embedding_client`/`reranker_client` are loaded once at process
-  startup and held for the process lifetime (proposal §Step 4: "load the production model once at
-  startup... a single sentence embeds in ~15ms" — `SentenceTransformer`/`CrossEncoder` instances
-  are thread-safe for inference, shared across every request).
-
-No database migration needed beyond the `retrieval_top_k`/`rrf_k` columns above — `knowledge_chunks`
-already had everything else from Step 1.
-
-### Performance: what was actually slow, and what was fixed
-
-Investigated with hard `EXPLAIN ANALYZE` evidence against the real, live database (not theorized):
-
-1. **The BM25/sparse leg had no index at all.** `search_by_bm25` recomputed
-   `to_tsvector('simple', content)` for every row on every request — measured at **~1.4 seconds**
-   via a full sequential scan. Fixed with a GIN index on that exact expression
-   (`idx_chunks_content_fts`, migration `a81a690b9d24`) — the identical query now runs in **~9ms**,
-   a ~150x improvement.
-2. **The dense leg's query plan was corrupted by stale statistics.** After the Step 8/9 bulk
-   embedding backfill (many `UPDATE`s to a previously-all-`NULL` column), Postgres's planner
-   statistics were stale enough that it estimated a full sequential scan as *cheaper* than using
-   the existing `idx_chunks_embedding_hnsw` index — measured at **~1.36 seconds**. Running `ANALYZE
-   knowledge_chunks;` alone (no query or index change) brought that down to **~0.11–0.2s**.
-   `ChunkModel.analyze_table()` now runs automatically at the end of every
-   `EmbeddingGenerationController.embed_chunks()` call (both the auto-sync path and the backfill
-   path), so this can't silently go stale again after future bulk writes.
-3. **The dense and sparse legs ran sequentially, not concurrently**, even though they're
-   independent queries on independent DB sessions. `PGVectorProvider.hybrid_search` now runs both
-   via `asyncio.gather` — a real, if smaller, latency win now that both legs are individually fast.
-4. **Both ML models were lazy-loaded on first use, not at startup.** `main.py` constructed the
-   provider objects at boot but never actually triggered their (measured: not fast on this dev
-   machine) one-time weight loading — that cost silently landed on whichever real request happened
-   to be first. `startup_span()` now runs one real warmup call against each provider at boot, so
-   model loading happens once, at server start, not inline in a user-facing request.
-
-**Honest remaining bottleneck**: with the DB layer now fast, the dominant cost per request is CPU-only
-ML inference itself — embedding the query (BGE-M3) and re-ranking the fused candidates
-(cross-encoder) — which is fundamentally bounded by this dev machine's hardware (no GPU, the same
-constraint documented in Step 8). No code-level change eliminates that; real GPU hardware is the
-actual fix if sub-second end-to-end latency is required. I have not yet timed the live
-`/api/retrieve` endpoint's model-inference portion in isolation — that's the natural next diagnostic
-step if latency is still a concern after these fixes.
-
-### Before you start the API: a sequencing note
-
-`main.py`'s startup now loads BGE-M3 (for query embedding) and the cross-encoder (for re-ranking)
-into memory. **Don't start `uvicorn` while a Step 8 shootout run or the embedding backfill is still
-active** — this machine has already hit real memory limits twice; loading a second BGE-M3 instance
-on top of one still resident risks another crash. Check first:
-```bash
-ps aux | grep step8_seed | grep -v grep    # or whatever process is currently embedding
-```
-
-### Verifying — real BM25, real RRF, real re-ranking, real isolation (dense leg honest about its current state)
-
-I proved the SQL-level logic directly against the live database before writing this section:
-`search_by_bm25` found real matches for a real Arabic query against real `raylab` content;
-`search_by_vector` correctly returned zero rows (no embeddings exist for most of the corpus until
-the backfill above finishes) without erroring; `hybrid_search` gracefully degraded to BM25-only
-ranking and produced the identical result set; and a controlled isolation probe (a second,
-clearly-fake `client_id`) returned nothing. Once the backfill/automatic embedding above has run for
-a given file, its dense leg contributes real results too — nothing else changes.
-
-**CLI (once the API is running):**
-```bash
-conda activate raylab
-cd /mnt/d/Raylab_Project/src
+cd src
 uvicorn main:app --reload --port 8000
+```
+
+Smoke-test in a third terminal:
+
+```bash
 curl http://localhost:8000/api/
 ```
 
-**Postman:**
+Expect `{"app_name":"Raylab","app_version":"0.1"}`.
 
-| # | Request | Expected |
-|---|---|---|
-| 1 | `POST /api/retrieve`, header `X-Admin-Api-Key: <raylab's real key>`, body `{"query": "نقابة المهندسين"}` | `200`, real content back |
-| 2 | Same, body adds `"metadata_filters": {"sheet_name": "Insurance Guide"}` | `200`, results narrowed to that real sheet |
-| 3 | Same, body adds `"metadata_filters": {"not_a_real_key": "x"}` | `422` |
-| 4 | Same as #1 with header `X-Admin-Api-Key: not-a-real-key` | `401` |
+### 3.8 Deploy the LLM generation backend (external GPU host)
 
-Confirm isolation for request #1's returned `id`s:
+The FastAPI app calls out to an OpenAI-compatible vLLM endpoint for generation/routing — it does **not** run the model itself. Launch it on a GPU host (Colab, rented GPU, on-prem):
+
 ```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT id, client_id FROM knowledge_chunks WHERE id IN (<ids from the response>);"
+vllm serve MBZUAI-Paris/Nile-Chat-12B \
+  --dtype bfloat16 --max-model-len 8192 --gpu-memory-utilization 0.85 \
+  --port 8001 --served-model-name nile-chat-12b-base \
+  --enable-lora --max-lora-rank 16 \
+  --lora-modules mode-a-lora=mennaharmas/raylab-nilechat-12b-v2-lora
 ```
-Expect every row to show `client_id = 'raylab'`.
+
+Ready-made launch notebooks (vLLM install, GPU check, tunnel setup) are under `src/run_model/` — use `serve_consolidated_multi_lora.ipynb` for the current single-server setup (base model + Mode A LoRA adapter on one port).
+
+Point `src/.env` at the reachable endpoint (a Cloudflare/ngrok tunnel URL if running on Colab), then restart `uvicorn`:
+
+```ini
+GENERATION_BACKEND="NILE_CHAT_12B"
+GENERATION_BASE_URL="<tunnel URL for the host running vLLM>"
+GENERATION_MODEL_NAME="mode-a-lora"
+
+QUERY_ROUTER_BACKEND="NILE_CHAT_12B_BASE"
+QUERY_ROUTER_BASE_URL="<same or separate tunnel URL>"
+QUERY_ROUTER_MODEL_NAME="nile-chat-12b-base"
+```
+
+### 3.9 Verify end-to-end
+
+```bash
+curl -X POST http://localhost:8000/api/whatsapp/chat \
+  -H "X-Admin-Api-Key: raylab-admin-test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "11111111-1111-1111-1111-111111111111", "message": "أهلا"}'
+```
+
+**Available endpoints:**
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/` | Health check |
+| POST | `/api/sync` | Trigger a OneDrive sync for a client |
+| GET | `/api/sync/{task_id}/status` | Poll sync task status |
+| POST | `/api/retrieve` | Raw hybrid-retrieval debug endpoint |
+| POST | `/api/whatsapp/chat` | Chat pipeline (intent routing + reply generation) |
+| GET | `/api/analytics/dashboard` | Analytics dashboard KPIs |
+
+All authenticated routes take header `X-Admin-Api-Key: <the key set during onboarding>`.
 
 ---
 
-## Section 3 — Step 1: Text Processing Pipeline (RAG + LLM)
-
-Section 2 (Steps 1–9 above) is complete. This is the first step of Section 3 — the WhatsApp Chat
-Workflow — per `D:\project\Implementation Plan — Section 3 The WhatsApp Chat Workflow.md` and
-`claude.md` §6. See that file for the full architectural rationale; this section is the
-operational how-to-run-and-verify-it record, matching every Step 1–9 section above.
-
-### Architectural additions
-
-- **`stores/generation/*`** (`GenerationInterface`/`GenerationEnums`/`GenerationProviderFactory`/
-  `providers/QwenProvider.py`) — a new Ports & Adapters store for the conversational LLM,
-  independent of the existing embedding-only `stores/llm`. `QwenProvider` is a thin
-  OpenAI-compatible HTTP client (`requests`, offloaded via `asyncio.to_thread` — the same pattern
-  `MSALGraphProvider` already uses) with two methods: `generate_reply()` and `classify_intent()`
-  (zero-shot closed-set classification, reused for both intent routing and Mode A's
-  narrow/broad-query breadth detection).
-- **`stores/llm/templates/template_parser.py`** — the `(bucket, template_id) -> rendered string`
-  resolver `claude.md` §1.1 already documented but that hadn't been built yet. Reads from the
-  existing static `prompt_templates.py` (Bucket B) / `system_directives.py` (Bucket C) modules.
-- **`stores/llm/templates/static/system_directives.py`** — one new Bucket C entry,
-  `whatsapp_mode_a_reply_directive` (the fixed Egyptian-Arabic / ground-only / mandatory-follow-up
-  policy Mode A's system prompt is built from). The pre-existing real `directive_brand_cross_referral`
-  entry is reused as-is for the cross-brand-suggestion case — nothing new was invented for that.
-- **`controllers/TextReplyController.py`** — Mode A (query-breadth-aware retrieval via
-  `RetrievalController.retrieve(..., top_k_override=...)`, Egyptian-Arabic grounded rewrite,
-  cross-brand suggestion, mandatory follow-up question) / Mode B (verbatim `TemplateParser`
-  substitution, zero LLM calls) dual reply logic.
-- **`controllers/IntentRoutingController.py`** — the one shared classification-and-routing gate:
-  classifies once, dispatches via `utils/intent_routing_map.py`'s data-driven lookup (never a
-  per-intent `if`), writes both tiers of chat history, and fires the analytics log as a
-  **fire-and-forget** Celery task (`tasks.log_intent.log_intent_turn.delay(...)`, never awaited).
-- **`utils/session_store.py`** (`SessionStore`) — Tier 1 (Redis, rolling expiry) of the two-tier
-  chat-history architecture, including hydration from Tier 2 (Postgres `chat_history`) on a cache
-  miss.
-- **`utils/intent_routing_map.py`** — the closed `Intent` taxonomy and the data-driven
-  intent → phase routing map. `complaint`/`book_appointment` currently route to an honest "not
-  implemented yet" reply (Steps 2/5 aren't built) rather than being silently mishandled by the text
-  pipeline. **2026-08-31: narrowed from seven intents to exactly three** — `complaint` / `inquiry` /
-  `book_appointment`. `query_price`/`query_schedule`/`query_branch`/`general_inquiry` collapsed
-  into the single `inquiry` catch-all (all four already routed to the same `TEXT_PIPELINE` target,
-  so the finer split was routing-irrelevant); `cancel_appointment` folded into `book_appointment`
-  (both are real booking actions, both already routed to `BOOKING_PIPELINE`); `unclassified` removed
-  entirely — `NileChat12BBaseProvider.classify_intent`'s own failure fallback now returns `"inquiry"`
-  directly, a real member of the closed set, rather than a fourth label the model itself could never
-  legitimately produce.
-- **`routes/whatsapp.py`** (`POST /api/whatsapp/chat`) + `routes/schemes/whatsapp.py` — the
-  PoC-simulator text endpoint. Same admin-API-key → `client_id` resolution as `routes/retrieval.py`.
-  `ChatResponse` gained `debug_json` (optional, default `null`) — the fine-tuned Mode A model's own
-  extracted JSON block for that turn (see `TextReplyController.reply`'s docstring), always `null` for
-  Mode B, the out-of-domain decline path, or a not-yet-fine-tuned model. Internal/testing field only
-  (`scripts/collect_golden_responses.py`'s grounding check), never patient-facing.
-- **`RetrievalController.retrieve()`** gained an optional `top_k_override` parameter (additive,
-  defaults to `None`) — Section 2's existing `/api/retrieve` endpoint is completely unaffected
-  since it never passes it; only Mode A's query-breadth logic uses it.
-- **`client_config`** gained `whatsapp_retrieval_top_k_narrow` (default `1`) and
-  `whatsapp_retrieval_top_k_broad` (default `5`) — never a literal inside `TextReplyController`.
-- **`stores/query_router/*`** (`QueryRouterInterface`/`QueryRouterEnums`/`QueryRouterProviderFactory`/
-  `providers/NileChat12BBaseProvider.py`, 2026-08-30, provider replaced 2026-09-01) — a second,
-  independent Ports & Adapters store,
-  deliberately separate from `stores/generation/` (see "Dual-model architecture" below for why).
-  Two methods, `classify_intent()` and `rewrite_query()` (split from one original combined
-  `classify_and_rewrite()` call, 2026-08-31 — see below), replacing the old single-model
-  `classify_intent()` call.
-- New tables: `chat_history` (Tier 2, UUID-anchored, append-only), `intent_log` (Phase 6's
-  analytics log, append-only), `dialogue_state_template_map` (data-driven Mode B trigger →
-  template_id mapping; seeded with two real rows, `greeting → call_greeting` and
-  `closing → call_closing`, both real Bucket B templates).
-
-### Dual-model architecture: query-router sidecar (2026-08-30, provider replaced 2026-09-01)
-
-Multi-turn retrieval has real history in this project: `RetrievalController.retrieve()` embeds a
-bare query string with no history awareness, so a short reply like "اه" — or any message that only
-makes sense given the prior turn — searched literally, returning near-random chunks. Two earlier
-fixes were tried and both were superseded:
-
-1. **`resolved_query` via the same fine-tuned Mode A model.** `IntentRoutingController` called
-   `generation_client.classify_intent()` (the same object `TextReplyController` uses for Mode A
-   generation) asking it to also emit a history-aware rewrite. Real, repeated production evidence
-   showed this call collapsing into Mode A's own heavily-trained JSON-then-phrasing shape regardless
-   of what the classify-and-rewrite prompt actually asked for — e.g. a raw response of a fenced
-   ` ```json ` block containing an empty `{}` followed by a full patient-facing decline sentence,
-   instead of `{"intent": ..., "resolved_query": ...}`. Reverted.
-2. **A deterministic `last_topic_hint` cache + gated retrieval retry** (`_extract_topic_hint`,
-   `_augment_and_retrieve`, topic-drift detection via a relative retrieval-score-improvement check —
-   zero-LLM, no hardcoded thresholds beyond reusing `client_config`'s already-calibrated
-   `whatsapp_breadth_score_gap`). Worked and was verified against real Postman traffic, but was
-   explicitly reverted at the user's direction in favor of a genuine LLM-based rewrite once a model
-   that wouldn't repeat failure #1 was identified.
-
-**Original model choice (2026-08-30, retired 2026-09-01 — see failure #5 below)**: a **second,
-independent model**, `stores/query_router/*`, dedicated *only* to intent classification and query
-rewriting — never used for Mode A generation. Deliberately **not** a base/lighter checkpoint of the
-same Mode A model family reused via `stores/generation/`: the model originally chosen,
-MBZUAI-Paris/Nile-Chat-4B, was a genuinely separate model from the Mode A 12B checkpoint — same
-Egyptian-dialect-specialist research lineage (real prior evidence this family handles this
-project's domain, since the 12B sibling is what Mode A itself is fine-tuned on), but broadly
-instruction/DPO-tuned rather than narrowly LoRA-fine-tuned on one task shape, which is the specific
-property failure #1 exploited. `IntentRoutingController`'s constructor now takes
-`query_router_client` instead of `generation_client` — it has no other use for the Mode A client
-once the old `generation_client.classify_intent()` call is gone (not to be confused with
-`query_router_client.classify_intent()`, the new sidecar's own, unrelated method of the same name).
-`resolved_query` is used only for retrieval inside
-`TextReplyController._mode_a_reply`; the raw patient message (`text`) is untouched everywhere else
-— `PATIENT MESSAGE:`, `chat_history`, `human_handoff_queue` all still show exactly what the patient
-typed. `session_store.py`'s `last_topic_hint` mechanism from fix #2 above is gone entirely — this
-architecture doesn't need it, since the rewritten query is now computed fresh every turn from real
-history by a model built for the job, not a cached deterministic proxy.
-
-**Verified against real multi-turn Postman traffic** (2026-08-31) — and that real traffic surfaced a
-third failure mode, distinct from #1/#2 above, that led to a further refinement:
-
-3. **A single combined `classify_and_rewrite()` call, sharing one system prompt for both intent
-   classification and query rewriting.** Nile-Chat-4B's real, published context length is 2048
-   tokens — much tighter than the 12B Mode A checkpoint's — and this shared prompt (closed intent
-   set + rewrite rules + worked examples, all in one) genuinely overflowed it under real traffic
-   (a live 400 `Bad Request`, `vLLM` error body confirmed via added debug logging). Trimming the
-   guidance to fit measurably *weakened* intent-classification rule-following (a booking-vs-inquiry
-   distinction that worked at full verbosity regressed once shortened), and — separately — a
-   concrete worked example in the rewrite guidance was observed leaking its own literal exam name
-   into a `resolved_query` for a real conversation that never mentioned it (the model anchoring on
-   the example's literal vocabulary instead of generalizing the pattern). Both symptoms trace back
-   to the same root cause: two structurally different tasks forced to share one token budget.
-
-`classify_intent()` and `rewrite_query()` became two separate, sequential calls, each with its own
-full 2048-token budget and its own Bucket C guidance (`whatsapp_intent_classification_guidance`,
-`whatsapp_query_rewrite_guidance`). `whatsapp_query_rewrite_guidance`'s worked examples
-deliberately use abstract bracketed placeholders (`[EXAM_NAME]`, `[ASPECT_ASKED]`) instead of
-concrete Arabic vocabulary, with an explicit instruction that a placeholder must never appear
-literally in the model's own output — directly addressing the anchoring failure mode from #3
-above, since there's no longer any concrete example text left to copy.
-
-**Still not fully resolved** — a fourth failure mode, verified against real multi-turn Postman
-traffic on 2026-09-01:
-
-4. **`classify_intent()` running before `rewrite_query()`, on the raw patient message.** Even with
-   the split above, a generic follow-up ("الفحص"/a possessive suffix meaning "its ___") referring
-   to an exam named several turns earlier kept failing to resolve — the SAME symptom recurring for
-   a third distinct prompt-engineering attempt (after #1's concrete-example collapse and #3's
-   shared-prompt overflow), despite fully abstract guidance this time. Root cause identified as
-   ordering, not wording: `classify_intent()` was still implicitly expected to reason about
-   history/pronouns on the same turn its own routing decision was made, even though that was
-   supposed to be `rewrite_query()`'s job entirely.
-
-CQR (Contextual Query Reformulation): `rewrite_query()` runs FIRST, unconditionally, on every
-turn, before intent is even known. `classify_intent()` receives `rewrite_query()`'s own output as
-its `text` parameter, never the patient's raw message, and its prompt no longer carries any
-pronoun/history-resolution instructions at all — by construction, its input is always already
-standalone. `IntentRoutingController.route_turn`'s own call order is now `rewrite_query()` →
-`classify_intent()` → dispatch, not `classify_intent()` → (conditionally) `rewrite_query()`.
-**Trade-off accepted deliberately**: this removes the "skip `rewrite_query()` for non-RAG
-intents" efficiency gain the split briefly had (§ above) — routing can no longer be decided before
-rewriting happens, so every turn now costs two calls unconditionally, not conditionally one or two.
-`TextReplyController` is unaffected — it still receives the raw patient `text` (untouched, for
-`PATIENT MESSAGE:`/`chat_history`/`human_handoff_queue`) and the resolved standalone query (for
-retrieval) as two separate arguments, exactly as before; only which upstream call produces which
-value, and in what order, changed.
-
-**Also centralized (2026-09-01, same day as the reordering above)**: both calls' fixed protocol
-shells (persona framing, the `<reasoning>` block requirement, the JSON output shape) were extracted
-out of the provider file and into two new Bucket C directives —
-`whatsapp_intent_classification_directive`, `whatsapp_cqr_directive` — so every LLM instruction in
-this project genuinely lives in `system_directives.py`, not split between that file and a provider.
-This required the provider to import `TemplateParser` directly to resolve its own fixed directives
-— the one `stores/` provider in this codebase that does, since every sibling provider instead
-receives its Bucket C content pre-rendered from the calling controller. `guidance` (the
-domain-specific, per-call content) still comes from the caller either way.
-
-**Still not fully resolved even after CQR** — a fifth data point, gathered by adding unconditional
-raw-response logging to `rewrite_query()` and re-testing against real multi-turn Postman traffic:
-
-5. **The 4B checkpoint itself.** Even with CQR reordering and full centralization, the exact same
-   generic-reference anaphora-resolution failure recurred — a **fourth** distinct prompt-engineering
-   strategy failing the identical narrow skill (after #1's concrete-example collapse, #3's
-   shared-prompt overflow, and the ordering fix above). The new raw-response log confirmed this was
-   a genuine reasoning failure, not a parsing bug: `rewrite_query()` returned perfectly valid JSON,
-   `resolved_query` populated, but literally identical to the unresolved raw input — no fallback
-   path ever triggered. Meanwhile every *other* capability on the same checkpoint worked reliably
-   throughout (intent classification, verbatim preservation of already-standalone messages,
-   resolution once given a sufficiently strong literal signal). Four failed attempts concentrated on
-   one narrow skill, while everything else worked, was treated as real evidence of a reliability
-   ceiling specific to that 4B checkpoint's capability on this one task — not something a fifth
-   prompt rewrite was likely to fix.
-
-**Current architecture (2026-09-01)**: `NileChat4BProvider` was deleted entirely — not kept
-alongside a new option — and replaced by `NileChat12BBaseProvider`, serving the **raw, unadapted**
-`MBZUAI-Paris/Nile-Chat-12B` checkpoint (the same base weights Mode A's own `GENERATION_BACKEND`
-was LoRA-fine-tuned FROM, used here in its general-purpose form, deliberately never the fine-tuned
-deployment). `QueryRouterEnums.NILE_CHAT_4B` → `NILE_CHAT_12B_BASE`; `QUERY_ROUTER_MODEL_NAME`
-default `nile-chat-4b` → `nile-chat-12b-base`; `QUERY_ROUTER_REQUEST_TIMEOUT_SECONDS` default
-`15` → `20` (a real, larger model now, not a nudge for any observed slowness). A real,
-credited-but-unproven bet, same status the 4B provider itself started with: general LLM-scaling
-trends make a 3x larger, general-purpose model a credible candidate for reliable multi-step
-reasoning over conversation history, and the base (non-LoRA-adapted) checkpoint doesn't carry the
-narrow collapse risk a fine-tuned sibling would — but that trend hasn't been verified against this
-project's own real traffic for this specific task yet. Real multi-turn Postman traffic is what
-confirms or rejects it, not the size argument alone. Serving notebook:
-`src/fine_tune_nilechat/serve_nilechat12b_base_query_router.ipynb`, adapted from the already-proven
-`src/run_nilechat12b.ipynb` (Phase 0's own bake-off notebook for this exact base checkpoint).
-
-### Dynamic metadata pre-filtering — implemented, then reverted same day (2026-09-02)
-
-**Motivation (real evidence)**: A/B reranker testing (`scripts/ab_test_rerankers_petct.py`) showed
-even a stronger reranker struggling on some queries because the initial vector search (embedding
-recall) was already pulling candidates from the wrong sheet/domain (e.g. `Examinations` rows
-surfacing for a payment-procedure question) — no reranker can recover a chunk that never made it
-into the candidate set. `query_router_client.classify_intent()` was extended to also predict a
-`target_sheet` (sourced from `SchemaRegistryModel.list_sheets(client_id)`, validated against the
-real allowed set, `None` when unconfident), threaded through `IntentRoutingController` into
-`TextReplyController._mode_a_reply`, which added `sheet_name` to `metadata_filters` with a two-tier
-fallback (drop the filter and retry unfiltered on zero results or a weak top score, via a new
-`client_config.whatsapp_sheet_filter_score_threshold`).
-
-**Reverted the same day, after real multi-turn Postman/golden-suite traffic** showed the two-field
-classify_intent task destabilizing the model rather than improving retrieval:
-
-1. **Systematic wrong-sheet guesses.** Real `[sheet_filter]` log lines showed the classifier
-   predicting the exact same incorrect sheet — a truncated, tatweel-decorated raw Excel tab name —
-   for four different, unrelated real `Examinations`-topic questions (MRI, dental X-ray, CBCT,
-   ultrasound), never once landing on the obviously-correct `Examinations` sheet.
-2. **Repetition-loop failures on `classify_intent` itself.** Several real turns showed the model's
-   raw response degenerating into the patient's own message echoed back verbatim 6-12+ times,
-   never producing valid JSON at all — the same greedy-decoding (`temperature=0.0`) repetition risk
-   this file's Mode A section already disclosed, now observed on the classification call too.
-3. **Net effect**: the existing out-of-set validation and two-tier fallback caught every bad guess
-   before it reached a patient (zero regressions), but the feature never once produced a correct,
-   accepted filtered result in real traffic — pure downside (a new LLM failure surface) with no
-   measured retrieval win to offset it.
-
-**Fully reverted, not patched**: `classify_intent()` is back to its pre-2026-09-02 signature and
-JSON schema (`intent` only); `IntentRoutingController`/`TextReplyController` are back to their
-original brand-only retrieval-filter logic; `client_config.whatsapp_sheet_filter_score_threshold`
-removed from the ORM model (migration `a2c8f5e91d34` downgraded — see its own `downgrade()` for the
-exact `DROP COLUMN`); `raylab`'s `allowed_metadata_keys` reverted to `['brand']`. The retrieval
-pre-filtering problem this was meant to solve is still real and still open — a future attempt should
-account for both failure modes above (clean, untruncated sheet labels; and classify_intent's own
-susceptibility to repetition loops under greedy decoding) rather than repeating this exact design.
-
-### False-positive human handoffs on empty JSON extraction (2026-09-02)
-
-**Real evidence** (not a regression — confirmed via `git diff` against the last stable commit that
-neither `whatsapp_mode_a_reply_directive`, `ReplyVerificationController.py`, nor Mode A's real
-generation provider (`NileChatProvider.py`) had any relevant change): `ReplyVerificationController`
-was auto-rejecting correct answers and routing them to `human_handoff_queue`, logged as
-`reason='unverified_numeric_claim'`. Two real, reproduced patterns, both traced to the same root
-symptom — the fine-tuned model's own JSON field-selection step is sometimes incomplete even when its
-phrasing correctly quotes real CONTEXT content:
-
-1. **Broad turn, JSON entirely empty.** A closely-clustered 5-source broad retrieval (topically
-   adjacent MRI-brain exam variants, weak score separation) returned `fields: {}` for every source,
-   while the phrasing still correctly cited a real fact (`14 يوم` Creatinine prep) from Source 1.
-   Reproduced twice on identical real traffic (`"عايزة اعمل رنين علي المخ"`).
-2. **JSON populated, but missing the one field whose value contains the number.** A CBCT case: the
-   branch field was captured, but the exam's own name (`"CBCT (3D) Single Arch"`) never was — so the
-   literal `3` inside that product name got flagged as an unverified numeric claim.
-
-Both fixed together, in `TextReplyController.py` and `ReplyVerificationController.py`:
-
-- **Widening retry extended to `broad` breadth.** The existing empty-JSON widening retry
-  (`_mode_a_reply`) previously only fired for `narrow` (retrying against the wider broad-ceiling
-  candidate set as genuinely new evidence). Broad already sees the maximal candidate set this turn's
-  retrieval produced, so there's no wider evidence to add — instead it retries the SAME
-  `context_block` once with a new, narrowly-scoped corrective instruction
-  (`_BROAD_EMPTY_JSON_RETRY_NUDGE`, same "not Bucket B/C" carve-out as `GENERATION_UNAVAILABLE_FALLBACK`)
-  naming the exact failure pattern and asking the model to select and populate the right source's
-  fields before writing the phrasing.
-- **`ReplyVerificationController.verify_and_gate`** gained an optional `context_block` parameter
-  (backward-compatible, defaults to `None`) — the real CONTEXT text the model was actually shown for
-  its final generation attempt, threaded from `TextReplyController._mode_a_reply` (tracked through
-  both the existing narrow retry and the new broad retry, so it always reflects the FINAL attempt's
-  real context, not a stale pre-retry one). Folded into the grounding check's allowed-numbers pool
-  alongside `json_block`'s own values: a number genuinely present in the real CONTEXT shown this turn
-  is by definition not a fabrication, regardless of whether the model's own JSON bookkeeping happened
-  to capture it. This doesn't loosen what counts as a real hallucination (still a hard reject for any
-  number absent from the real evidence shown) — it only fixes the pool this check measures against,
-  which was previously narrower than what the model actually saw.
-
-### Structured field preservation & dynamic field selection
-
-Added after real Postman traffic against the live Qwen endpoint showed the model unreliably
-extracting one relevant fact out of a chunk with many unrelated fields (e.g. asked only about
-elevator access, but the chunk also carries Visa/ValU, working hours, wheelchair access, ambulance
-availability...). `ChunkingController` already builds the flattened `content` string from a real,
-already-parsed `{column: value}` dict (`row.row_data`, sourced from `schema_registry`'s discovered
-columns) — that dict was being discarded after the flatten. It's no longer discarded:
-
-- **`controllers/ChunkingController.py`** — `_extract_non_empty_fields(row_data, columns)` is now
-  the single source of truth for which fields exist on a row; `_concatenate_fields` builds
-  `content` *from* that dict rather than filtering independently. The same dict is also stored,
-  structured, as `metadata.field_data` — never embedded, never indexed, purely a generation-time
-  aid. No new column, no migration — `metadata` was already `JSONB`.
-- **`controllers/FieldSelectionController.py`** (new) — `select_relevant_fields(query, field_data,
-  min_similarity, max_fields)`. Embeds the query and `field_data`'s own keys (whatever they are,
-  for whatever sheet/client — never a hardcoded field name) via the same shared `embedding_client`
-  retrieval already uses, ranks by cosine similarity, returns only the label:value pairs above the
-  floor. Zero regex, zero keyword lists, zero second LLM call.
-- **`controllers/TextReplyController.py`** — narrow-breadth CONTEXT is now built by
-  `_narrow_context_block`, which runs each retrieved chunk's `field_data` through
-  `FieldSelectionController` and uses only the matched fields. Falls back to that chunk's full
-  `content` (today's pre-existing behavior) whenever `field_data` is missing (any chunk synced
-  before this change) or nothing clears the similarity floor. Broad-breadth CONTEXT is completely
-  unchanged — full multi-chunk content, `[BEGIN SOURCE n]` delimiters — since Rule 5's
-  summarization task needs breadth, not narrowing.
-- **`client_config`** — `whatsapp_field_selection_max_fields` (new column, default `2`) caps how
-  many fields a narrow query can pull in. `whatsapp_min_relevance_score` is **repurposed**: it
-  previously gated a Mode A relevance check on the reranker's raw logit score (that mechanism was
-  removed); it's now the minimum BGE-M3 cosine similarity a field label must reach. Its default was
-  updated from `0.0` to `0.35` as part of this migration — the old value was calibrated for a
-  completely different, unbounded score scale and would not have functioned as a meaningful cosine
-  floor. **This new default is a conservative placeholder, not yet calibrated against real
-  query/label similarity samples** the way the reranker gate was — recalibrate it once this is
-  live, the same evidence-based way (collect real similarity pairs, confirm an actual gap between
-  genuine and spurious matches, don't assume the number transfers).
-- **`main.py`** — `app.field_selection_controller = FieldSelectionController(embedding_client=app.embedding_client)`,
-  constructed right after `embedding_client`, passed into `TextReplyController`.
-
-**Rollout note:** existing `knowledge_chunks` rows have no `field_data` — the fallback above keeps
-them working exactly as before, but narrow queries only benefit from field-level filtering after a
-real `POST /api/sync` re-processes that client's data through the updated `ChunkingController`.
-This doesn't happen automatically on deploy; per claude.md §4.3 the only valid way to confirm it
-worked is a real sync against real data; a synthetic/partial one doesn't count.
-
-### Database migration
+## Daily Startup (after the first-time setup above is done)
 
 ```bash
-cd src/models/db_schemes/raylab
-alembic upgrade head
-alembic current   # should show e8b3c9a1f2d7 (head)
-```
+# 1. infra containers
+cd /mnt/d/Raylab_Project/docker && docker compose up -d pgvector redis rabbitmq && docker compose ps
 
-Chain, in order: `deb4535fe6cf` (`chat_history`, `intent_log`, `dialogue_state_template_map`,
-`whatsapp_retrieval_top_k_narrow`/`_broad`) → `c3f7a1b2d4e6` (`whatsapp_min_relevance_score`,
-originally for a Mode A relevance gate since removed) → `e8b3c9a1f2d7`
-(`whatsapp_field_selection_max_fields`; repurposes `whatsapp_min_relevance_score`'s default for its
-new role as FieldSelectionController's cosine-similarity floor — see "Structured field
-preservation & dynamic field selection" above) → ... → `a7c2e9f4b8d1` (drops the
-`FieldSelectionController`-era columns after its removal in favor of full-chunk narrow CONTEXT) →
-`c5d8f2a934b7` (`human_handoff_queue` — see "Reply verification safety gate" below) →
-`d9f4a2e7c1b6` (raises `whatsapp_retrieval_top_k_narrow` 1 -> 3) →
-`b3a9f5c2d8e1` (reverts it 3 -> 1 after a real regression — see "Golden-suite v2 FP-handoff fixes" below).
-
-### New dependencies
-
-None — `requests` and `redis` were already in `requirements.txt` (used by `MSALGraphProvider` and
-Celery's own result backend, respectively). `QwenProvider` and `SessionStore` reuse both rather
-than adding new packages.
-
-### A real, honest infrastructure gap: the generation endpoint isn't deployed yet
-
-`GENERATION_BASE_URL` in `src/.env` is currently a **placeholder** (`http://localhost:8001`) — no
-real Qwen2.5-7B-Instruct server is running anywhere yet. This dev machine's GPU (Quadro M2200,
-4GB VRAM — already noted as insufficient for Step 8's Swan-Large candidate) cannot serve a 7B
-model either. Until a real OpenAI-compatible endpoint is stood up somewhere reachable (a rented
-GPU box running `vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001`, per the Implementation Plan's
-Deployment & Infrastructure section) and `GENERATION_BASE_URL` is updated to point at it:
-
-- **`IntentRoutingController.route_turn` classifies intent before anything else happens** — before
-  the Mode A/B check, before persistence. This means, honestly, **no path through the real
-  `POST /api/whatsapp/chat` endpoint works end-to-end without a reachable `GENERATION_BASE_URL`**,
-  not even Mode B, even though Mode B's own reply generation never calls the LLM once routing has
-  already happened.
-- Verified directly against the real running server (not assumed): with the placeholder URL, a
-  real Postman/`curl` call fails with `requests.exceptions.ConnectionError` inside
-  `QwenProvider._post_chat_completion`, called from `IntentRoutingController.route_turn`'s
-  classification step — confirmed from the live server's own traceback, not inferred.
-- This is a deployment/infrastructure gap, not a code gap — every layer beneath the classification
-  call (routing dispatch, `TemplateParser`, both persistence tiers, the fire-and-forget log) is
-  real and wired correctly; there is simply nothing real for `classify_intent` to talk to yet.
-
-A separate, honest note on intent classification: the Implementation Plan's original design named
-a fine-tuned CAMeL-BERT-DA checkpoint for this. That model doesn't exist yet — training one needs
-labeled data this project doesn't have yet either. `classify_intent()` uses the same Qwen
-generation endpoint with a constrained-output prompt instead, which is a real, working technique
-today and shares the same `GenerationInterface` port, but it is **not** the CAMeL-BERT model the
-plan describes. Swapping in a real fine-tuned classifier later is a new `stores/` adapter behind
-the same interface, not a rewrite of `IntentRoutingController`.
-
-### Verifying — confirming the gap, and everything up to it, against the real server
-
-Start the stack:
-```bash
-cd /mnt/d/Raylab_Project/src
+# 2. conda env
 conda activate raylab
-uvicorn main:app --reload --port 8000
-```
-```bash
-# separate terminal, same conda env
+
+# 3. celery worker (own terminal)
+cd /mnt/d/Raylab_Project/src
 celery -A celery_app worker --queues=default,onedrive_sync,document_parsing,chunk_generation,embedding_shootout,embedding_generation,whatsapp_text --loglevel=info
+
+# 4. fastapi server (second terminal)
+cd /mnt/d/Raylab_Project/src
+uvicorn main:app --reload --port 8000
+
+# 5. smoke test (third terminal)
+curl http://localhost:8000/api/
 ```
 
-**In Postman**, `POST http://localhost:8000/api/whatsapp/chat`, header `X-Admin-Api-Key:
-raylab-admin-test-key`, body:
-```json
-{"session_id": "11111111-1111-1111-1111-111111111111", "message": "أهلا"}
-```
-This will attempt intent classification (needs the generation endpoint) — with no real endpoint
-configured yet, expect a `500` with a connection error surfaced from `QwenProvider`. This is
-expected given the gap above, and is itself a useful negative check: confirm the error originates
-from the generation call, not from routing/persistence.
-
-**Once a real `GENERATION_BASE_URL` is configured**, seed a session with `dialogue_state:
-"greeting"` first to exercise Mode B specifically (otherwise every message defaults into Mode A):
-```bash
-docker exec raylab-redis redis-cli -a raylab_redis_2222 --no-auth-warning \
-  SET "session:raylab:11111111-1111-1111-1111-111111111111" \
-  '{"dialogue_state":"greeting","brand_filter":null,"slots":{},"history":[]}' EX 86400
-```
-Re-run the same Postman request and confirm: `mode` in the response is `"mode_b"`, `reply` matches
-`call_greeting`'s real text byte-for-byte, and:
-```bash
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT direction, content FROM chat_history WHERE client_id='raylab' ORDER BY created_at;"
-docker exec raylab-pgvector psql -U postgres -d raylab -c \
-  "SELECT intent, routing_outcome FROM intent_log WHERE client_id='raylab' ORDER BY created_at DESC LIMIT 1;"
-```
-confirm both directions of the message are recorded and the intent log shows one new row.
-
-### Verifying — Mode A (requires a real, reachable `GENERATION_BASE_URL`)
-
-Once a real Qwen2.5-7B-Instruct endpoint is configured, in Postman: (a) a narrow factual question
-about a real, currently-synced sheet's content, confirming a grounded reply and a follow-up
-question at the end; (b) a broad query ("عندكم إيه من الأشعة؟"), confirming a concise, multi-item
-summary (`whatsapp_retrieval_top_k_broad` chunks) rather than a single narrow fact; (c) the same
-broad query with a Redis-seeded `brand_filter` set to a brand that doesn't offer the service,
-confirming the cross-brand note fires; (d) a query with no real matching content at all,
-confirming an honest "not available" reply rather than a fabricated one — never against invented
-chunks, always against this client's real, currently-synced `knowledge_chunks`.
-
-**Success criteria before moving to Step 2**: the connection-error negative check above passes
-against the real running server (confirming everything up to the generation call is wired
-correctly); once a real `GENERATION_BASE_URL` is configured, the Mode B check and all four Mode A
-Postman cases pass; every turn tested produces exactly one `intent_log` row and both directions
-recorded in `chat_history`.
-
-### Phase 0: model bake-off (Qwen2.5-7B-Instruct hit a real cognitive ceiling)
-
-Live-data grading of `scripts/golden_test_suite.json` runs against the deployed Qwen2.5-7B-Instruct
-showed persistent fact inversion, math hallucination, and scaffolding leakage even on turns that
-received clean, correctly-narrowed context (see `rag_execution.log`-backed analysis) — evidence of
-a model capability ceiling, not an architecture defect. Three candidates are being bake-off tested
-as replacements, using the exact same evaluation harness, never a synthetic or scripted substitute
-(claude.md §4.3):
-
-| Candidate | HF repo | Role |
-|---|---|---|
-| Falcon-H1-34B-Instruct | `tiiuae/Falcon-H1-34B-Instruct` | Primary — #1 on the Open Arabic LLM Leaderboard at time of research |
-| Nile-Chat-12B | `MBZUAI-Paris/Nile-Chat-12B` | Egyptian-dialect specialist |
-| Qwen2.5-32B-Instruct-AWQ | `Qwen/Qwen2.5-32B-Instruct-AWQ` | Control arm (same lineage as the current model, more capacity) |
-
-Each candidate gets its own `GenerationEnums` value and its own `stores/generation/providers/*.py`
-adapter (`FalconH1Provider.py` and `NileChatProvider.py` are implemented; a Qwen2.5-32B-AWQ branch
-follows once its real chat-template/EOS constants are confirmed from its own tokenizer config —
-never assumed by copying another model's tuned values) — identical pattern to Step 8's
-`EMBEDDING_BACKEND` shootout, so `GENERATION_BACKEND` always identifies which real model produced a
-given golden-suite output. `NileChatProvider`'s stop sequence (`<end_of_turn>`) is confirmed from
-Nile-Chat-12B's own real `generation_config.json` (`eos_token_id: [1, 106]`, where 106 is Gemma's
-documented end-of-turn token — Nile-Chat is built on Gemma 3, not Qwen/Falcon's ChatML lineage).
-
-**1. Launch the candidate under vLLM** (on whatever GPU host — Colab/rented/on-prem — is serving it):
+If a request fails with `Connection reset by peer` against Postgres/Redis after a Windows sleep/wake cycle:
 
 ```bash
-# Falcon-H1-34B-Instruct — bf16 needs ~70GB VRAM (no confirmed pre-quantized 34B checkpoint at
-# research time); --quantization bitsandbytes fits a 40GB A100. --enforce-eager is required —
-# CUDA graph capture silently SIGKILLed the process on a real run (see Phase 0 verdict below).
-vllm serve tiiuae/Falcon-H1-34B-Instruct --quantization bitsandbytes --load-format bitsandbytes \
-  --dtype bfloat16 --max-model-len 4096 --gpu-memory-utilization 0.80 --enforce-eager \
-  --port 8001 --served-model-name falcon-h1-34b
-
-# Nile-Chat-12B — fits comfortably on a single 24GB+ GPU in bf16.
-vllm serve MBZUAI-Paris/Nile-Chat-12B --port 8001 --served-model-name nile-chat-12b
-
-# Qwen2.5-32B-Instruct-AWQ — pre-quantized, ~20GB VRAM.
-vllm serve Qwen/Qwen2.5-32B-Instruct-AWQ --port 8001 --served-model-name qwen25-32b-awq
+docker restart raylab-pgvector raylab-redis raylab-rabbitmq
 ```
 
-**2. Point `src/.env` at it** — `GENERATION_MODEL_NAME` must exactly match `--served-model-name`
-above, or every request 404s:
-
-```
-GENERATION_BACKEND="NILE_CHAT_12B"
-GENERATION_BASE_URL="<tunnel URL for the host running vLLM>"
-GENERATION_MODEL_NAME="nile-chat-12b"
-```
-
-Restart the FastAPI app so `main.py`'s composition root re-reads `Settings` and rebuilds
-`app.generation_client` through the new branch.
-
-**3. Collect and save under a candidate-specific filename** (the default `golden_raw_outputs.json`
-is silently overwritten on the next run otherwise):
-
-```bash
-python scripts/collect_golden_responses.py --output golden_outputs_falcon34b.json
-python scripts/collect_golden_responses.py --output golden_outputs_nilechat12b.json
-python scripts/collect_golden_responses.py --output golden_outputs_qwen32b.json
-```
-
-`--retry-failed <path>` re-sends only the cases an existing output file recorded as failed
-(`[REQUEST FAILED...]` or missing), merging fresh results back in — added after Falcon-H1's run hit
-5/67 timeouts, so a partial run doesn't need a full 67-query re-collection to complete.
-
-Grade each output file against `golden_test_suite.json`'s `expected_fact`/`expected_behavior`
-independently, then compare across candidates on the same failure taxonomy already established
-(Chinese leakage, fact inversion, scaffolding leakage, math hallucination) before promoting a winner
-into `GENERATION_BACKEND`.
-
-### Phase 0 verdict: Falcon-H1-34B — rejected
-
-Full 67-case grading against a real, running deployment (`golden_outputs_falcon34b.json`, correlated
-against `rag_execution.log`'s `[breadth]`/`[context]` traces) found:
-
-- **Fatal, model-level hallucination on clean context** — a 198-character, correctly narrow-routed,
-  correctly field-selected context produced a fabricated doctor's name ("دكتورة أسماء ماهر") and an
-  invented queue number that have no plausible source in that content. Not explainable by retrieval,
-  chunking, or prompt construction.
-- **Fact inversion concentrated in the broad (5-chunk) retrieval path** — ambulance availability,
-  anesthesia availability (×2), an MRI branch question — consistent with a real, pre-existing,
-  documented risk (`TextReplyController`'s own comments already describe cross-chunk entity
-  conflation as the reason the `[BEGIN SOURCE n]` delimiters exist), but the delimiters did not fully
-  prevent it for this model.
-- **Language leakage** (Chinese, French-fragment, a full English paragraph, "unfortunately",
-  "Organize") in 6/62 successful replies — consistent with published research (Qwen-Scope/SASFT,
-  cited in the Phase 0 research thread) showing this is a systemic, trained-in property of how these
-  models represent language internally, not a `FalconH1Provider` misconfiguration (stop tokens,
-  temperature, repetition_penalty were all verified correct/neutral).
-- **5/67 timeouts/500s** — root-caused to real inference latency under `--enforce-eager` (required to
-  avoid a separate CUDA-graph-capture crash) over a Colab-tunneled connection, not context size (a
-  55-character narrow query timed out identically to a 6,916-character broad one) or a code defect.
-  This category was infra-fixable (see below) and does not count as evidence against the model.
-
-**Verdict: rejected for production** on the hallucination/leakage evidence, which is model-level, not
-a codebase defect — while the timeout infra was hardened anyway since Nile-Chat-12B and Qwen2.5-32B
-inherit the same deployment shape.
-
-### Infra hardening applied after the Falcon-H1 run
-
-- **`GENERATION_REQUEST_TIMEOUT_SECONDS`**: 30 → 120 (`src/.env`, `.env.example`, `helpers/config.py`
-  default) — real traffic against a `--enforce-eager` 34B deployment showed 5/67 turns exceeding 30s
-  on latency alone. `scripts/collect_golden_responses.py --timeout` default raised 60 → 260 to match
-  (a turn can make up to 2 sequential LLM calls — intent classification + reply generation — each
-  individually budgeted at the new 120s).
-- **`GenerationTimeoutError`** (`stores/generation/GenerationInterface.py`): a vendor-agnostic
-  exception every provider's `_post_chat_completion` translates `requests.exceptions.Timeout` into,
-  so `TextReplyController` never depends on a specific HTTP client's exception type crossing the
-  Ports & Adapters boundary. `classify_intent()` catches it internally and falls back to
-  `"unclassified"` (consistent with its existing "never raises" contract for any unparseable
-  response); `generate_reply()` lets it propagate, since only the controller layer should decide
-  patient-facing fallback text.
-- **`TextReplyController.GENERATION_UNAVAILABLE_FALLBACK`**: a small, deliberately-scoped exception to
-  the "every reply is a Bucket B/C template or live model output" rule — a generic technical-outage
-  notice used only when `generate_reply()` times out. Kept out of `prompt_templates.py` on purpose:
-  that module's own header requires every entry to be a verbatim transcription of real source
-  business documents, and an outage notice describes no business fact or policy, so inventing it as
-  "real source text" would be worse than a small, clearly-labeled, narrowly-scoped exception (the
-  same reasoning claude.md §1.3 already applies to Bucket B/C's own hardcoding carve-out, for a
-  different, genuinely non-business category of string).
-
-### Reply verification safety gate (`ReplyVerificationController` + `human_handoff_queue`)
-
-Follows Step 7's LoRA fine-tune (`src/fine_tune_nilechat/nile_chat_finetune_v2_colab.ipynb`):
-every Mode A reply's phrasing is now checked against its own extracted `debug_json` before
-`TextReplyController` returns it, instead of trusting the fine-tuned model's grounding discipline
-unverified in production.
-
-- **`controllers/ReplyVerificationController.py`** — re-implements
-  `scripts/finetune_data/grounding_gate.py`'s `_check_phrasing_numeric_grounding` natively (same
-  regex, same sentence-splitting/question-exclusion rule) rather than importing it — `scripts/` is
-  never imported by `src/` at runtime (claude.md's directory tree). Every number in a non-question
-  claim sentence must appear among the values in the turn's own `debug_json` (a flat dict for a
-  narrow answer, or each `{"source", "fields"}` entry's values for a broad one); a turn with no
-  `debug_json` at all (out-of-domain decline, or a not-yet-fine-tuned model) passes through
-  unchecked. On rejection, the real draft reply is withheld — `REPLY_VERIFICATION_FAILED_FALLBACK`
-  is shown instead — and the turn is written to `human_handoff_queue` for a human agent to answer
-  directly. `debug_json` is still returned to the caller even on rejection (unlike the
-  generation-timeout fallback path) — it's a real artifact of what the model extracted, and is
-  exactly what a reviewer needs to see why the phrasing was blocked.
-- **`models/HumanHandoffQueueModel.py`** + `human_handoff_queue` table — minimal by design: one
-  `enqueue()` write method, the only thing `ReplyVerificationController` needs. A resolve/list-open
-  surface for an actual human-agent dashboard is a later, separately-scoped step.
-- **`TextReplyController`** gained a required `reply_verification_controller` constructor arg, and
-  `reply()`/`_mode_a_reply()` both gained a required `session_id` parameter (threaded from
-  `IntentRoutingController.route_turn`, which already had it) so a rejected turn's
-  `human_handoff_queue` row can be joined back to its session the same way `chat_history` rows are.
-- **`main.py`** — `app.human_handoff_queue_model` constructed right after `session_store`,
-  `app.reply_verification_controller` constructed from it and passed into `TextReplyController`.
-
-### Database migration — `human_handoff_queue`
-
-```bash
-cd src/models/db_schemes/raylab
-alembic upgrade head
-alembic current   # should show c5d8f2a934b7 (head)
-```
-
-### Golden-suite v2 FP-handoff fixes (retrieval-widening + prompt scoping)
-
-A 71-case golden-suite v2 audit against the fine-tuned model + Step 8 safety gate found the
-dominant real failure mode wasn't hallucination — it was the model under-confidently declining
-questions whose answer genuinely existed in the source data (18/71 cases), and two hallucinations
-traceable to the same root cause (a needed fact split across rows a single narrow chunk could
-never surface). Three targeted fixes, none touching generation quality on already-correct answers:
-
-- **`client_config.whatsapp_retrieval_top_k_narrow`: tried `1 -> 3`, reverted back to `1`.** A real
-  case (a company contracted under one brand system but not the other) needed a second row from the
-  same sheet that top-1 retrieval structurally could never return, so this was raised — paired with
-  `TextReplyController._narrow_context_block` wrapping multi-chunk narrow CONTEXT the same way
-  broad-breadth answers already do (`[BEGIN SOURCE n]/[END SOURCE n]`, via a new shared
-  `_wrap_sources` helper), but only when more than one chunk actually came back — a single chunk
-  (the common case) kept the exact unwrapped shape the fine-tuned model trained on. A follow-up
-  71-case re-run still showed real regressions: three previously-correct, single-dominant-chunk
-  cases (top reranker score 7.08 in one — the fact repeated in literally every retrieved candidate)
-  started producing completely empty extraction once shown as multiple wrapped sources. A real-data
-  retrieval investigation (`scripts/investigate_retrieval_task1.py`, prints the real narrow-window
-  and broad-ceiling candidates side by side for a given query) confirmed retrieval itself wasn't
-  the bottleneck for these — the untrained wrapped/multi-chunk narrow format was — and surfaced a
-  concrete distractor case: a different company's row, same field label, different number, that
-  only entered the window because top_k_narrow exceeded 1. Reverted `whatsapp_retrieval_top_k_narrow`
-  back to `1` and `_narrow_context_block` back to its original unconditional, unwrapped single-chunk
-  join. `_wrap_sources` stays (still used by broad breadth and by the widening retry below); only
-  narrow's own default and wrapping were reverted.
-- **Widening retry (kept)** — if breadth is narrow and the first generation's own JSON extraction
-  comes back completely empty (`_is_json_empty`, new helper), `_mode_a_reply` retries generation
-  once against the wider broad-ceiling candidate set already fetched for that same turn (zero extra
-  retrieval calls — `all_results` was already sitting in memory before the narrow slice). Never
-  asserts an answer exists; only gives the model more real evidence and lets it decide again, so
-  it can still decline on the retry. A timed-out retry silently keeps the original attempt rather
-  than failing the turn. The result, retried or not, still passes through
-  `ReplyVerificationController` unchanged. New `TextReplyController._generate_grounded_reply`
-  factors the message-build/generate/JSON-split sequence out so both the first attempt and the
-  retry share one code path. This is now the *only* mechanism that ever shows a narrow turn more
-  than one chunk — narrow's own top_k stays 1 unconditionally, and widening only fires when that
-  single chunk's own extraction genuinely comes back empty, not as a blanket policy.
-- **`whatsapp_mode_a_reply_directive`** (Bucket C) gained rule `1ج` (kept, unaffected by the
-  top_k revert): don't volunteer a comparison to a second, nearby fact (another rate, price,
-  branch) unless that second fact is *also* explicitly present in CONTEXT — targets a real case
-  where the model correctly answered the asked question but got rejected by the safety gate for
-  citing an unrelated, ungrounded rate for contrast.
-
-### Database migrations — `whatsapp_retrieval_top_k_narrow` (raised, then reverted)
-
-```bash
-cd src/models/db_schemes/raylab
-alembic upgrade head
-alembic current   # should show b3a9f5c2d8e1 (head)
-```
-
-Chain: `d9f4a2e7c1b6` (raised `1 -> 3`) → `b3a9f5c2d8e1` (reverted `3 -> 1`, per the investigation
-above) — both are real, separate forward migrations; the second was never used to hand-edit the
-first (claude.md: never hand-edit an already-applied migration).
-
-## Environment variables
-
-| Variable | File | Purpose |
-|---|---|---|
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `docker/env/.env.postgres` | Postgres container credentials |
-| `REDIS_PASSWORD` | `docker/env/.env.redis` | Redis container credential |
-| `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | `docker/env/.env.rabbitmq` | RabbitMQ container credentials |
-| `APP_NAME`, `APP_VERSION` | `src/.env` | App identity (used by `helpers/config.py`) |
-| `POSTGRES_USERNAME` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_MAIN_DATABASE` | `src/.env` | App-side Postgres connection (host: `localhost`, port: `5433`) |
-| `MSAL_CLIENT_ID` | `src/.env` | Azure AD public-client app ID (required — see Step 3) |
-| `TOKEN_CACHE_ENCRYPTION_KEY` | `src/.env` | Fernet key encrypting `token_cache.encrypted_cache` (required — see Step 3) |
-| `ONEDRIVE_AUTH_BACKEND` / `ONEDRIVE_AUTH_BACKEND_LITERAL` | `src/.env` | OneDrive provider selection (currently only `MSAL_GRAPH`) |
-| `EMBEDDING_BACKEND_LITERAL` | `src/.env` | Self-documenting list of implemented embedding backends |
-| `EMBEDDING_BACKEND` | `src/.env` | Which embedding backend is production (default `BGE_M3` — the one that actually works) |
-| `HF_TOKEN` | `src/.env` | Optional HuggingFace token for gated repos (Swan-Large only; BGE-M3 ignores this) |
-| `VECTOR_DB_BACKEND` / `VECTOR_DB_BACKEND_LITERAL` | `src/.env` | Vector DB provider selection (currently only `PGVECTOR`) |
-| `RERANKER_BACKEND` / `RERANKER_BACKEND_LITERAL` | `src/.env` | Re-ranker provider selection (currently only `CROSS_ENCODER`) |
-| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `CELERY_TASK_*` | `src/.env` | Celery task queue config (Step 4) |
-| `GENERATION_BACKEND` / `GENERATION_BACKEND_LITERAL` | `src/.env` | Conversational-LLM provider selection — `QWEN2_5_7B_INSTRUCT` (production default), `FALCON_H1_34B_INSTRUCT`, `NILE_CHAT_12B`, `QWEN2_5_32B_INSTRUCT_AWQ` (Phase 0 bake-off candidates) |
-| `GENERATION_BASE_URL` | `src/.env` | Wherever the OpenAI-compatible endpoint for whichever `GENERATION_BACKEND` is selected is actually served — **placeholder by default**, see Section 3 Step 1's Deployment note and the Phase 0 bake-off section |
-| `GENERATION_MODEL_NAME` / `GENERATION_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Model name sent in the chat-completions request; HTTP timeout |
-| `QUERY_ROUTER_BACKEND` / `QUERY_ROUTER_BACKEND_LITERAL` | `src/.env` | Provider selection for the dedicated `classify_intent()`/`rewrite_query()` sidecar (default/only implemented value `NILE_CHAT_12B_BASE`, replacing the retired `NILE_CHAT_4B`) — see "Dual-model architecture" above for why this is a separate model from `GENERATION_BACKEND` |
-| `QUERY_ROUTER_BASE_URL` / `QUERY_ROUTER_MODEL_NAME` / `QUERY_ROUTER_REQUEST_TIMEOUT_SECONDS` | `src/.env` | Where the query-router sidecar is served, its served model name (default `nile-chat-12b-base`), and its HTTP timeout (deliberately tighter default than `GENERATION_REQUEST_TIMEOUT_SECONDS` — this call runs in front of every turn, before retrieval, and its own output is always small even though the model itself is now the same 12B class as Mode A) |
-| `SESSION_REDIS_URL` / `SESSION_TTL_SECONDS` / `SESSION_HISTORY_WINDOW` | `src/.env` | Tier 1 (Redis) of the two-tier chat-history architecture — Section 3 Step 1 |
-
-## Project layout
-
-See `claude.md` §1.1 for the full target directory tree. All nine steps exist today:
-
-```
-Raylab_Project/
-├── docker/
-│   ├── docker-compose.yml      # pgvector, redis, rabbitmq, fastapi, celery-worker
-│   │                           #   (no celery-beat, deliberately)
-│   ├── env/.env.example.{postgres,redis,rabbitmq,app}
-│   └── raylab/{Dockerfile, entrypoint.sh, alembic.example.ini}
-├── src/
-│   ├── main.py                 # API-process composition root
-│   ├── celery_app.py           # worker-process composition root, no beat_schedule
-│   ├── requirements.txt
-│   ├── .env.example
-│   ├── helpers/config.py       # Postgres + MSAL/OneDrive + Celery + embedding backend literals
-│   ├── routes/
-│   │   ├── base.py
-│   │   ├── sync.py
-│   │   ├── retrieval.py
-│   │   └── schemes/{sync,retrieval}.py
-│   ├── controllers/
-│   │   ├── BaseController.py
-│   │   ├── SyncController.py
-│   │   ├── DocumentParsingController.py
-│   │   ├── ChunkingController.py
-│   │   ├── EmbeddingShootoutController.py
-│   │   ├── EmbeddingGenerationController.py
-│   │   └── RetrievalController.py
-│   ├── tasks/
-│   │   ├── onedrive_sync.py
-│   │   ├── document_parsing.py
-│   │   ├── chunk_generation.py
-│   │   ├── embedding_shootout.py
-│   │   └── embedding_generation.py
-│   ├── stores/
-│   │   ├── onedrive/
-│   │   │   ├── OneDriveInterface.py, OneDriveEnums.py, OneDriveProviderFactory.py
-│   │   │   └── providers/MSALGraphProvider.py
-│   │   ├── vectordb/
-│   │   │   ├── VectorDBInterface.py, VectorDBEnums.py, VectorDBProviderFactory.py
-│   │   │   └── providers/PGVectorProvider.py   # insert_many, search_by_vector, search_by_bm25,
-│   │   │                                       #   hybrid_search (RRF), update_embeddings
-│   │   ├── reranker/
-│   │   │   ├── RerankerInterface.py, RerankerEnums.py, RerankerProviderFactory.py
-│   │   │   └── providers/CrossEncoderProvider.py
-│   │   └── llm/
-│   │       ├── LLMInterface.py, LLMEnums.py, LLMProviderFactory.py
-│   │       ├── providers/BGEM3Provider.py (real, working), providers/SwanLargeProvider.py (deferred)
-│   │       └── templates/clients/<client_id>/   # generated, gitignored — Bucket B/C (§3.5)
-│   │           ├── prompt_templates.py
-│   │           └── system_directives.py
-│   ├── utils/
-│   │   ├── dynamic_schema_loader.py   # stateless auto-discovery call site
-│   │   └── template_file_writer.py    # the only code allowed to write templates/clients/*
-│   └── models/
-│       ├── BaseDataModel.py
-│       ├── ChunkModel.py              # + hybrid_search, update_embeddings, get_chunks_without_embedding
-│       ├── ClientConfigModel.py       # + get_client_id_by_admin_api_key
-│       ├── SchemaRegistryModel.py     # get_or_register / update_bucket / set_mandatory_fields
-│       ├── TokenCacheModel.py         # Fernet-encrypted, client_id-scoped
-│       ├── StagingRowModel.py         # Bucket A only
-│       ├── EvaluationQueryModel.py    # Step 8 benchmark query set + scored results
-│       ├── enums/BucketEnum.py
-│       └── db_schemes/raylab/
-│           ├── schemes/{raylab_base,knowledge_chunk,client_config,schema_registry,token_cache,staging_row,evaluation_query,shootout_result}.py
-│           ├── alembic.ini.example
-│           └── alembic/{env.py, script.py.mako, versions/}
-├── .gitignore
-├── claude.md
-└── README.md
-```
+then restart the Celery worker and FastAPI server (steps 3–4 above).
